@@ -1,0 +1,12 @@
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+keystore.properties
+*.jks
+*.keystore
+docs/screenshots/model-check/
+.cloud-attachments/
