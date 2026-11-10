@@ -115,6 +115,7 @@ import studio.anatomy.app.model.AnimContext
 import studio.anatomy.app.model.CompiledScene
 import studio.anatomy.app.model.Hotspot
 import studio.anatomy.app.model.ObjectSpec
+import studio.anatomy.app.render.BloomPass
 import studio.anatomy.app.render.HotspotProjector
 import studio.anatomy.app.render.ProjectedHotspot
 import studio.anatomy.app.render.RenderQuality
@@ -146,6 +147,7 @@ class StudioState(
     var explodedAssembly by mutableStateOf<String?>(null)
     var selectedSystem by mutableStateOf<String?>(null)
     var xray by mutableStateOf(false)
+    var cutaway by mutableFloatStateOf(0f)
     var mode by mutableStateOf(StudioMode.EXPLORE)
     var activeStep by mutableIntStateOf(-1)
     var control by mutableFloatStateOf(spec.control.defaultValue)
@@ -168,7 +170,9 @@ class StudioState(
                 xray = false
             }
             StudioMode.CUTAWAY -> {
-                xray = true
+                // A real section: the near shell is sliced away rather than ghosted.
+                xray = false
+                if (cutaway < 0.05f) cutaway = 0.42f
                 selectedHotspot = null
             }
             StudioMode.EXPLODE -> {
@@ -323,6 +327,7 @@ class StudioState(
         explodedAssembly = null
         selectedSystem = null
         xray = false
+        cutaway = 0f
         mode = StudioMode.EXPLORE
         activeStep = -1
         control = spec.control.defaultValue
@@ -334,7 +339,12 @@ class StudioState(
 
     fun toggleXray() {
         xray = !xray
-        if (xray) mode = StudioMode.CUTAWAY else if (mode == StudioMode.CUTAWAY) mode = StudioMode.EXPLORE
+        if (xray) {
+            cutaway = 0f
+            mode = StudioMode.CUTAWAY
+        } else if (mode == StudioMode.CUTAWAY) {
+            mode = StudioMode.EXPLORE
+        }
     }
 
     private fun shortestAngle(start: Float, end: Float): Float {
@@ -401,11 +411,17 @@ fun StudioScreen(
     LaunchedEffect(state.playing, frameStepMs) {
         if (!state.playing) return@LaunchedEffect
         var last = 0L
+        var pending = 0L
         val stepNanos = frameStepMs * 1_000_000L
         while (isActive) {
             withFrameNanos { now ->
-                if (now - last > stepNanos) {
-                    last = now
+                if (last == 0L) last = now
+                pending += now - last
+                last = now
+                if (pending >= stepNanos) {
+                    // Carry the remainder so a 30 fps target on a 60 Hz panel advances the
+                    // mechanism evenly instead of dropping two frames at a time.
+                    pending %= stepNanos
                     clock.update(now, playing = state.playing, rate = state.playbackSpeed)
                     frame++
                 }
@@ -684,6 +700,28 @@ private fun Context.findActivity(): Activity? {
     return current as? Activity
 }
 
+/** Stable per-frame hash; equal values mean the stage bitmap can simply be re-blitted. */
+private fun renderSignature(request: RenderRequest): Long {
+    var hash = 17L
+    hash = hash * 31 + request.width
+    hash = hash * 31 + request.height
+    hash = hash * 31 + request.pose.yaw.toBits()
+    hash = hash * 31 + request.pose.pitch.toBits()
+    hash = hash * 31 + request.pose.zoom.toBits()
+    hash = hash * 31 + request.anim.ambientTime.toBits()
+    hash = hash * 31 + request.anim.machineTime.toBits()
+    hash = hash * 31 + request.anim.control.toBits()
+    hash = hash * 31 + request.explode.hashCode()
+    hash = hash * 31 + (request.selectedSystem?.hashCode() ?: 0)
+    hash = hash * 31 + (request.focusPartId?.hashCode() ?: 0)
+    hash = hash * 31 + (if (request.xray) 1 else 0)
+    hash = hash * 31 + request.cutaway.toBits()
+    hash = hash * 31 + (if (request.showGrid) 1 else 0)
+    hash = hash * 31 + (if (request.detail) 1 else 0)
+    hash = hash * 31 + request.quality.ordinal
+    return hash
+}
+
 @Composable
 private fun StudioStage(
     spec: ObjectSpec,
@@ -729,7 +767,8 @@ private fun StudioStage(
         explode = explodeMap,
         selectedSystem = if (studyColor) null else state.selectedSystem,
         focusPartId = state.selectedHotspot?.partId,
-        xray = if (studyColor) false else state.xray,
+        xray = if (studyColor) false else if (state.mode == StudioMode.CUTAWAY && state.cutaway > 0.02f) false else state.xray,
+        cutaway = if (studyColor || state.mode != StudioMode.CUTAWAY) 0f else state.cutaway,
         showGrid = state.showGrid,
         // Full detail is reserved for a paused, stationary inspection frame.
         // Animated scenes use the cheaper paint path and a smaller live buffer.
@@ -760,23 +799,20 @@ private fun StudioStage(
             isDither = true
         }
     }
+    // Non-observable cache of the last rendered frame signature; a Compose state write
+    // here would invalidate the canvas again on every pause.
+    val renderMemo = remember(spec.id) { longArrayOf(Long.MIN_VALUE) }
     // Light models can afford a much sharper moving buffer than a 80-part turbofan, so the
     // resolution follows the scene's weight instead of punishing every object equally.
     val heavyScene = scene.parts.size >= 40 || sceneFaceCount >= 3600
-    val liveScale = when {
-        still && !state.playing -> 1f
-        // Motion always gets the adaptive buffer. The quality selector still
-        // governs the paused, full-detail frame and manual dragging; this cap
-        // prevents a heavy mechanism from lagging just because SHARP is set.
-        still && state.playing -> if (heavyScene) 0.55f else 0.64f
-        qualitySetting == AnatomyPrefs.QUALITY_LITE ->
-            if (dragging) 0.5f else if (heavyScene) 0.55f else 0.62f
-        qualitySetting == AnatomyPrefs.QUALITY_SHARP ->
-            if (dragging) 0.7f else 0.8f
-        heavyScene -> if (dragging) 0.54f else 0.6f
-        dragging -> 0.68f
-        else -> 0.78f
+    // The live buffer now follows measured frame cost instead of a fixed table.
+    val maxScale = when (qualitySetting) {
+        AnatomyPrefs.QUALITY_LITE -> if (heavyScene) 0.56f else 0.64f
+        AnatomyPrefs.QUALITY_SHARP -> if (heavyScene) 0.78f else 0.9f
+        else -> if (heavyScene) 0.66f else 0.78f
     }
+    var adaptiveScale by remember(spec.id) { mutableFloatStateOf(if (heavyScene) 0.55f else 0.68f) }
+    val liveScale = if (still && !state.playing) 1f else adaptiveScale.coerceIn(0.42f, maxScale)
     val pins = if (state.showPins && stageWidth > 0) HotspotProjector.project(scene, request) else emptyList()
     val pinPlacements = if (pins.isEmpty()) emptyList() else layoutPins(
         pins = pins,
@@ -841,23 +877,45 @@ private fun StudioStage(
                 safeRight = safeRight * effectiveScale,
                 density = density.density * effectiveScale,
             )
-            val report = renderer.draw(NativeCanvas(target), scene, scaled)
+            val signature = renderSignature(scaled)
+            val reusable = renderMemo[0] == signature &&
+                target.width == bufferWidth && target.height == bufferHeight
+            if (!reusable) {
+                val report = renderer.draw(NativeCanvas(target), scene, scaled)
+                if (scaled.quality == RenderQuality.FULL && scaled.detail) {
+                    BloomPass.apply(target)
+                }
+                renderMemo[0] = signature
+                // Closed-loop resolution: hold the frame budget instead of guessing from
+                // part counts. A heavy mechanism quietly loses pixels while it moves and
+                // regains them the moment the camera settles.
+                if (scaled.quality == RenderQuality.INTERACTIVE) {
+                    val budget = (1000f / frameRate.coerceAtLeast(30)) - 4f
+                    val cost = report.paintMillis + report.buildMillis
+                    val next = when {
+                        cost > budget * 1.15f -> adaptiveScale - 0.06f
+                        cost < budget * 0.6f -> adaptiveScale + 0.05f
+                        else -> adaptiveScale
+                    }.coerceIn(0.42f, maxScale)
+                    if (kotlin.math.abs(next - adaptiveScale) > 0.006f) adaptiveScale = next
+                }
+                if (++perfFrame[0] % 10 == 0) {
+                    Log.d(
+                        "AnatomyPerf",
+                        "faces=${report.faceCount} batches=${report.batches} " +
+                            "patterns=${report.patterns} " +
+                            "chrome=${report.chromeMillis} build=${report.buildMillis} sort=${report.sortMillis} " +
+                            "paint=${report.paintMillis} cpu=${report.renderMillis}ms " +
+                            "${bufferWidth}x${bufferHeight}@$adaptiveScale",
+                    )
+                }
+            }
             drawContext.canvas.nativeCanvas.drawBitmap(
                 target,
                 null,
                 RectF(0f, 0f, stageWidth.toFloat(), stageHeight.toFloat()),
                 bufferPaint,
             )
-            if (++perfFrame[0] % 10 == 0) {
-                Log.d(
-                    "AnatomyPerf",
-                    "faces=${report.faceCount} batches=${report.batches} " +
-                        "patterns=${report.patterns} " +
-                        "chrome=${report.chromeMillis} build=${report.buildMillis} sort=${report.sortMillis} " +
-                        "paint=${report.paintMillis} cpu=${report.renderMillis}ms " +
-                        "${bufferWidth}x${bufferHeight}@${liveScale}",
-                )
-            }
         }
 
         Canvas(Modifier.fillMaxSize()) {

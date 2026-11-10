@@ -3,11 +3,9 @@ package studio.anatomy.app.render
 import studio.anatomy.app.core.Mat4
 import studio.anatomy.app.core.V3
 import studio.anatomy.app.core.cameraBasis
+import studio.anatomy.app.core.fitViewProjection
 import studio.anatomy.app.model.CompiledScene
 import studio.anatomy.app.model.Hotspot
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
 data class ProjectedHotspot(
     val hotspot: Hotspot,
@@ -17,36 +15,27 @@ data class ProjectedHotspot(
 )
 
 /**
- * Projects annotation anchors without drawing. Mirrors SceneRenderer's fit and
- * world composition so pins sit exactly on the rendered geometry.
+ * Projects annotation anchors without drawing. It now uses the same [fitViewProjection]
+ * as [SceneRenderer] instead of duplicating the framing maths, so pins cannot drift
+ * away from the geometry when the camera model changes.
  */
 object HotspotProjector {
 
     fun project(scene: CompiledScene, request: RenderRequest): List<ProjectedHotspot> {
         val framing = sceneFraming(scene, request)
-        val target = framing.target
         val basis = cameraBasis(request.pose)
-
-        val side = request.safeSide
-        val rightSide = if (request.safeRight >= 0f) request.safeRight else side
-        val top = request.safeTop
-        val bottom = request.safeBottom
-        val availableWidth = (request.width - side - rightSide - 16f).coerceAtLeast(40f)
-        val availableHeight = (request.height - top - bottom - 8f).coerceAtLeast(40f)
-        val centerX = side + availableWidth * 0.5f
-        val centerY = top + availableHeight * 0.5f
-
-        var maxX = 0.001f
-        var maxY = 0.001f
-        framing.fitBounds.corners().forEach { corner ->
-            val rx = corner.x - target.x
-            val ry = corner.y - target.y
-            val rz = corner.z - target.z
-            maxX = max(maxX, abs(rx * basis.right.x + ry * basis.right.y + rz * basis.right.z))
-            maxY = max(maxY, abs(rx * basis.up.x + ry * basis.up.y + rz * basis.up.z))
-        }
-        val scale = (min(availableWidth / (maxX * 2f), availableHeight / (maxY * 2f)) * 0.94f * request.pose.zoom)
-            .coerceIn(1f, 20000f)
+        val view = fitViewProjection(
+            basis = basis,
+            target = framing.target,
+            bounds = framing.fitBounds,
+            width = request.width,
+            height = request.height,
+            safeTop = request.safeTop,
+            safeBottom = request.safeBottom,
+            safeSide = request.safeSide,
+            safeRight = request.safeRight,
+            zoom = request.pose.zoom,
+        )
 
         val worlds = arrayOfNulls<Mat4>(scene.parts.size)
         scene.order.forEach { index ->
@@ -64,20 +53,13 @@ object HotspotProjector {
             }
         }
 
+        val out = FloatArray(2)
         return scene.spec.hotspots.mapIndexedNotNull { index, hotspot ->
             val partIndex = scene.hotspotPartIndex[index]
             if (partIndex < 0) return@mapIndexedNotNull null
             val world = worlds[partIndex] ?: return@mapIndexedNotNull null
-            val point = world.transform(hotspot.anchor)
-            val rx = point.x - target.x
-            val ry = point.y - target.y
-            val rz = point.z - target.z
-            val sx = centerX + (rx * basis.right.x + ry * basis.right.y + rz * basis.right.z) * scale
-            val sy = centerY - (rx * basis.up.x + ry * basis.up.y + rz * basis.up.z) * scale
-            ProjectedHotspot(hotspot, index + 1, sx, sy)
+            view.project(world.transform(hotspot.anchor), out, 0)
+            ProjectedHotspot(hotspot, index + 1, out[0], out[1])
         }
     }
-
-    @Suppress("unused")
-    private fun V3.dot(other: V3): Float = x * other.x + y * other.y + z * other.z
 }

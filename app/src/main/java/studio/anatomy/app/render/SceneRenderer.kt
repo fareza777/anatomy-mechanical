@@ -15,7 +15,10 @@ import studio.anatomy.app.core.CameraPose
 import studio.anatomy.app.core.Mat4
 import studio.anatomy.app.core.V2
 import studio.anatomy.app.core.V3
+import studio.anatomy.app.core.ViewProjection
 import studio.anatomy.app.core.cameraBasis
+import studio.anatomy.app.core.clipPolygonToDepth
+import studio.anatomy.app.core.fitViewProjection
 import studio.anatomy.app.model.AnimContext
 import studio.anatomy.app.model.CompiledScene
 import studio.anatomy.app.model.Hotspot
@@ -42,6 +45,7 @@ data class RenderRequest(
     val selectedSystem: String? = null,
     val focusPartId: String? = null,
     val xray: Boolean = false,
+    val cutaway: Float = 0f,
     val showGrid: Boolean = true,
     val quality: RenderQuality = RenderQuality.FULL,
     val safeTop: Float = 0f,
@@ -148,9 +152,11 @@ class SceneRenderer {
     private var grainShader: Shader? = null
     private var backdropBitmap: Bitmap? = null
     private var backdropKey: String = ""
-    private var chromeBitmap: Bitmap? = null
-    private var chromeKey: String = ""
     private var overlayBitmap: Bitmap? = null
+    private var projection: ViewProjection? = null
+    private var worldScratch = FloatArray(48)
+    private var clipScratch = FloatArray(48)
+    private var depthScratch = FloatArray(16)
     private var overlayKey: String = ""
     private var paintedPatterns = 0
     private val worlds = ArrayList<Mat4?>()
@@ -177,10 +183,41 @@ class SceneRenderer {
         val bounds = scene.bounds(request.explode)
         val visualBounds = expand(bounds, 1.14f)
         val framing = sceneFraming(scene, request)
-        target = framing.target
         basis = cameraBasis(request.pose)
-        computeFit(request, framing.fitBounds, width, height)
+        val view = fitViewProjection(
+            basis = basis,
+            target = framing.target,
+            bounds = framing.fitBounds,
+            width = width,
+            height = height,
+            safeTop = request.safeTop,
+            safeBottom = request.safeBottom,
+            safeSide = request.safeSide,
+            safeRight = request.safeRight,
+            zoom = request.pose.zoom,
+        )
+        projection = view
+        target = view.target
+        centerX = view.centerX
+        centerY = view.centerY
+        scale = view.pixelsPerUnit
         computeWorlds(scene, request)
+        val cutaway = request.cutaway.coerceIn(0f, 1f)
+        val cutawayActive = cutaway > 0.01f
+        var cutPlane = Float.MAX_VALUE
+        if (cutawayActive) {
+            var wMin = Float.MAX_VALUE
+            var wMax = -Float.MAX_VALUE
+            visualBounds.corners().forEach { corner ->
+                val w = (corner.x - target.x) * basis.eye.x +
+                    (corner.y - target.y) * basis.eye.y +
+                    (corner.z - target.z) * basis.eye.z
+                if (w < wMin) wMin = w
+                if (w > wMax) wMax = w
+            }
+            // Keep the far side of the section; the near shell is removed entirely.
+            cutPlane = wMax - (wMax - wMin) * cutaway * 0.92f
+        }
 
         drawChrome(canvas, scene, request, bounds, accent, width, height)
         val chromeAt = System.nanoTime()
@@ -205,27 +242,62 @@ class SceneRenderer {
                 val dot = nx * basis.eye.x + ny * basis.eye.y + nz * basis.eye.z
                 val backface = dot <= 0f
                 if (backface && !includeBackfaces) return@forEach
+                val vertexCount = face.indices.size
+                ensureWorldScratch(vertexCount * 2 + 2)
+                val m = world.m
+                var localMin = Float.MAX_VALUE
+                var localMax = -Float.MAX_VALUE
+                for (vertexIndex in 0 until vertexCount) {
+                    val vertex = part.mesh.vertices[face.indices[vertexIndex]]
+                    val base = vertexIndex * 3
+                    val wx = m[0] * vertex.x + m[1] * vertex.y + m[2] * vertex.z + m[3]
+                    val wy = m[4] * vertex.x + m[5] * vertex.y + m[6] * vertex.z + m[7]
+                    val wz = m[8] * vertex.x + m[9] * vertex.y + m[10] * vertex.z + m[11]
+                    worldScratch[base] = wx
+                    worldScratch[base + 1] = wy
+                    worldScratch[base + 2] = wz
+                    val d = (wx - target.x) * basis.eye.x +
+                        (wy - target.y) * basis.eye.y +
+                        (wz - target.z) * basis.eye.z
+                    depthScratch[vertexIndex] = d
+                    if (d < localMin) localMin = d
+                    if (d > localMax) localMax = d
+                }
+                // CUTAWAY slices the near half of the mechanism away instead of only
+                // ghosting it, so the cut reads as a real section.
+                var pointCount = vertexCount
+                var sliced = false
+                if (cutawayActive) {
+                    if (localMin > cutPlane) return@forEach
+                    if (localMax > cutPlane) {
+                        pointCount = clipPolygonToDepth(worldScratch, depthScratch, vertexCount, cutPlane, clipScratch)
+                        if (pointCount < 3) return@forEach
+                        sliced = true
+                    }
+                }
                 val slot = slotAt(slotIndex)
                 slotIndex++
-                slot.ensureCapacity(face.indices.size)
+                slot.ensureCapacity(pointCount)
                 var depth = 0f
                 var minX = Float.MAX_VALUE
                 var maxX = -Float.MAX_VALUE
                 var minY = Float.MAX_VALUE
                 var maxY = -Float.MAX_VALUE
-                val m = world.m
                 var screenIndex = 0
-                for (vertexIndex in face.indices) {
-                    val vertex = part.mesh.vertices[vertexIndex]
-                    val wx = m[0] * vertex.x + m[1] * vertex.y + m[2] * vertex.z + m[3]
-                    val wy = m[4] * vertex.x + m[5] * vertex.y + m[6] * vertex.z + m[7]
-                    val wz = m[8] * vertex.x + m[9] * vertex.y + m[10] * vertex.z + m[11]
+                val source = if (sliced) clipScratch else worldScratch
+                for (vertexIndex in 0 until pointCount) {
+                    val base = vertexIndex * 3
+                    val wx = source[base]
+                    val wy = source[base + 1]
+                    val wz = source[base + 2]
                     val rx = wx - target.x
                     val ry = wy - target.y
                     val rz = wz - target.z
-                    val sx = centerX + (rx * basis.right.x + ry * basis.right.y + rz * basis.right.z) * scale
-                    val sy = centerY - (rx * basis.up.x + ry * basis.up.y + rz * basis.up.z) * scale
                     val d = rx * basis.eye.x + ry * basis.eye.y + rz * basis.eye.z
+                    val viewDepth = (view.distance - d).coerceAtLeast(view.nearDepth)
+                    val inverse = view.focal / viewDepth
+                    val sx = view.centerX + (rx * basis.right.x + ry * basis.right.y + rz * basis.right.z) * inverse
+                    val sy = view.centerY - (rx * basis.up.x + ry * basis.up.y + rz * basis.up.z) * inverse
                     depth += d
                     if (sx < minX) minX = sx
                     if (sx > maxX) maxX = sx
@@ -318,28 +390,19 @@ class SceneRenderer {
         )
     }
 
-    private fun computeFit(request: RenderRequest, bounds: Aabb, width: Int, height: Int) {
-        val side = request.safeSide
-        val rightSide = if (request.safeRight >= 0f) request.safeRight else side
-        val top = request.safeTop
-        val bottom = request.safeBottom
-        val availableWidth = (width - side - rightSide - 16f).coerceAtLeast(40f)
-        val availableHeight = (height - top - bottom - 8f).coerceAtLeast(40f)
-        centerX = side + availableWidth * 0.5f
-        centerY = top + availableHeight * 0.5f
-        var maxX = 0.001f
-        var maxY = 0.001f
-        bounds.corners().forEach { corner ->
-            val rx = corner.x - target.x
-            val ry = corner.y - target.y
-            val rz = corner.z - target.z
-            val px = abs(rx * basis.right.x + ry * basis.right.y + rz * basis.right.z)
-            val py = abs(rx * basis.up.x + ry * basis.up.y + rz * basis.up.z)
-            maxX = max(maxX, px)
-            maxY = max(maxY, py)
+    private fun ensureWorldScratch(vertices: Int) {
+        val needed = vertices * 3
+        if (worldScratch.size < needed) {
+            var size = worldScratch.size
+            while (size < needed) size *= 2
+            worldScratch = FloatArray(size)
+            clipScratch = FloatArray(size)
         }
-        val fitScale = min(availableWidth / (maxX * 2f), availableHeight / (maxY * 2f)) * 0.94f * request.pose.zoom
-        scale = fitScale.coerceIn(1f, 20000f)
+        if (depthScratch.size < vertices) {
+            var size = depthScratch.size
+            while (size < vertices) size *= 2
+            depthScratch = FloatArray(size)
+        }
     }
 
     private fun computeWorlds(scene: CompiledScene, request: RenderRequest) {
@@ -385,30 +448,12 @@ class SceneRenderer {
         width: Int,
         height: Int,
     ) {
-        if (!request.cacheLayers) {
-            paintBackdrop(canvas, width, height, accent, request.quality)
-            if (request.showGrid) drawFloor(canvas, scene, request, bounds, accent)
-            drawContactShadow(canvas, bounds)
-            return
-        }
-        val key = "$width:$height:${request.pose.yaw}:${request.pose.pitch}:${request.pose.zoom}" +
-            ":${request.explode.hashCode()}:${request.showGrid}:$accent:${request.quality}" +
-            ":${request.focusPartId ?: "-"}" +
-            ":${bounds.min.x},${bounds.min.y},${bounds.min.z},${bounds.max.x},${bounds.max.y},${bounds.max.z}"
-        var bitmap = chromeBitmap
-        if (key != chromeKey || bitmap == null) {
-            if (bitmap == null || bitmap.width != width || bitmap.height != height) {
-                bitmap?.recycle()
-                bitmap = Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-                chromeBitmap = bitmap
-            }
-            val chromeCanvas = Canvas(bitmap)
-            paintBackdrop(chromeCanvas, width, height, accent, request.quality)
-            if (request.showGrid) drawFloor(chromeCanvas, scene, request, bounds, accent)
-            drawContactShadow(chromeCanvas, bounds)
-            chromeKey = key
-        }
-        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        // Only the backdrop is pose-independent. Caching it on its own stops the whole
+        // stage from re-rasterising on every orbit frame, which is what the old combined
+        // chrome bitmap did whenever yaw or pitch changed.
+        drawBackdrop(canvas, width, height, accent, request.quality)
+        if (request.showGrid) drawFloor(canvas, scene, request, bounds, accent)
+        drawContactShadow(canvas, bounds)
     }
 
     private fun drawBackdrop(canvas: Canvas, width: Int, height: Int, accent: Int, quality: RenderQuality) {
@@ -901,11 +946,7 @@ class SceneRenderer {
     }
 
     private fun projectTo(point: V3, output: FloatArray, offset: Int) {
-        val rx = point.x - target.x
-        val ry = point.y - target.y
-        val rz = point.z - target.z
-        output[offset] = centerX + (rx * basis.right.x + ry * basis.right.y + rz * basis.right.z) * scale
-        output[offset + 1] = centerY - (rx * basis.up.x + ry * basis.up.y + rz * basis.up.z) * scale
+        projection?.project(point, output, offset)
     }
 
     private fun transformNormalX(world: Mat4, normal: V3): Float =
@@ -997,7 +1038,7 @@ class SceneRenderer {
         var count = 0
         for (slot in drawList) {
             if (!slot.drawPattern) continue
-            if (count >= 8) break
+            if (count >= 12) break
             val width = slot.maxX - slot.minX
             val height = slot.maxY - slot.minY
             if (width < 14f || height < 10f) continue
@@ -1008,7 +1049,10 @@ class SceneRenderer {
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             path.close()
-            val alpha = (slot.patternStrength * 46f).toInt().coerceIn(10, 46)
+            // Hatching fades in with face size so the texture does not pop when zooming.
+            val fade = ((slot.area - 300f) / 900f).coerceIn(0f, 1f)
+            if (fade <= 0.01f) continue
+            val alpha = (slot.patternStrength * 46f * fade).toInt().coerceIn(6, 46)
             val lightSurface = ColorMath.luminance(slot.fill) > 0.40f
             linePaint.color = if (lightSurface) {
                 ColorMath.withAlpha(0xFF071014.toInt(), alpha)
