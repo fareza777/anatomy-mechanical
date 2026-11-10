@@ -5,14 +5,17 @@ import studio.anatomy.app.model.ObjectSpec
 import studio.anatomy.app.model.buildScene
 import studio.anatomy.app.objects.arachnid
 import studio.anatomy.app.objects.cameraLens
+import studio.anatomy.app.objects.cyclotronSystem
 import studio.anatomy.app.objects.deltaRobot
-import studio.anatomy.app.objects.gearbox
 import studio.anatomy.app.objects.fusionRingSystem
+import studio.anatomy.app.objects.gearbox
+import studio.anatomy.app.objects.haloHabitat
 import studio.anatomy.app.objects.hydraulicArm
 import studio.anatomy.app.objects.ionThruster
 import studio.anatomy.app.objects.jetPumpSystem
 import studio.anatomy.app.objects.liftSystem
 import studio.anatomy.app.objects.maglevTransitSystem
+import studio.anatomy.app.objects.marsRover
 import studio.anatomy.app.objects.orbitalSolarSystem
 import studio.anatomy.app.objects.pulseSystem
 import studio.anatomy.app.objects.quadcopter
@@ -62,6 +65,9 @@ object AnatomyCatalog {
             fusionRingSystem(),
             qubitVaultSystem(),
             maglevTransitSystem(),
+            haloHabitat(),
+            cyclotronSystem(),
+            marsRover(),
         )
     }
 
