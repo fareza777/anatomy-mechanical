@@ -296,10 +296,7 @@ private fun CutawayPanel(state: StudioState) {
             }
             Switch(
                 checked = state.xray,
-                onCheckedChange = {
-                    state.xray = it
-                    if (it) state.cutaway = 0f
-                },
+                onCheckedChange = { state.xray = it },
                 modifier = Modifier.size(width = 40.dp, height = 30.dp),
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = colors.ink,
@@ -311,29 +308,6 @@ private fun CutawayPanel(state: StudioState) {
             )
         }
         Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            MonoLabel("SECTION DEPTH", color = colors.textSecondary, fontSize = 8)
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${(state.cutaway * 100).roundToInt()}%",
-                color = colors.textSecondary,
-                fontFamily = SpaceGrotesk,
-                fontSize = 15.sp,
-            )
-        }
-        Slider(
-            value = state.cutaway,
-            onValueChange = { state.cutaway = it },
-            valueRange = 0f..1f,
-            modifier = Modifier.fillMaxWidth().height(30.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = colors.accent,
-                activeTrackColor = colors.accent,
-                inactiveTrackColor = colors.line,
-                activeTickColor = Color.Transparent,
-                inactiveTickColor = Color.Transparent,
-            ),
-        )
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp),

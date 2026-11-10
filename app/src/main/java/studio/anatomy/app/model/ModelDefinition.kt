@@ -214,9 +214,8 @@ class ModelBuilder {
         doubleSided: Boolean = false,
         build: MeshBuilder.() -> Unit,
     ) {
-        // The lambda was never invoked before, so every merge produced an empty mesh
-        // and silently added nothing. Run it against the builder as intended.
-        val builder = MeshBuilder().apply(build)
+        val builder = MeshBuilder()
+        builder.build()
         add(
             id = targetId,
             name = name,

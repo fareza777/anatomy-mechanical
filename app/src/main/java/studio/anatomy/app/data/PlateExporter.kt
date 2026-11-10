@@ -26,7 +26,6 @@ import studio.anatomy.app.model.AnimContext
 import studio.anatomy.app.model.CompiledScene
 import studio.anatomy.app.model.ObjectSpec
 import studio.anatomy.app.model.Part
-import studio.anatomy.app.render.BloomPass
 import studio.anatomy.app.render.ColorMath
 import studio.anatomy.app.render.FaceMode
 import studio.anatomy.app.render.RenderQuality
@@ -93,7 +92,6 @@ object PlateExporter {
             cacheLayers = false,
         )
         renderer.draw(Canvas(bitmap), scene, request)
-        BloomPass.apply(bitmap, strength = 0.42f)
         drawPlateCaption(context, bitmap, spec)
         val fileName = "anatomy_${spec.id}_${stamp()}.png"
         val file = writeCacheFile(context, fileName, "image/png") { out ->
