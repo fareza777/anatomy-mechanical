@@ -25,6 +25,7 @@ class Material(
     val pattern: SurfacePattern = SurfacePattern.NONE,
     val patternStrength: Float = 0f,
 ) {
+    val baseColor: Int = base
     val dark: Int
     val light: Int
     val edge: Int
@@ -38,8 +39,11 @@ class Material(
     init {
         // A gentler shadow mix keeps unlit faces readable against the dark stage; before,
         // a cream link turned away from the key light vanished into the backdrop.
-        val shadow = ColorMath.mix(base, 0xFF04090C.toInt(), 0.34f)
-        val warmLight = ColorMath.mix(base, 0xFFF4E7CC.toInt(), 0.54f)
+        // Shadows fall towards a cool near-black and lit faces towards warm white. The
+        // wider range gives metal real depth; the view-dependent rim in Shading keeps
+        // faces that turn away from the key light separated from the dark stage.
+        val shadow = ColorMath.mix(base, 0xFF050A12.toInt(), 0.56f)
+        val warmLight = ColorMath.mix(base, 0xFFFFF1D6.toInt(), 0.50f)
         dark = ColorMath.withAlpha(shadow, alpha)
         light = ColorMath.withAlpha(warmLight, alpha)
         edge = ColorMath.withAlpha(ColorMath.mix(base, 0xFF000000.toInt(), 0.64f), (alpha * 0.92f).toInt())
@@ -83,6 +87,17 @@ class Material(
         return ColorMath.mix(base, worn, edgeWear.coerceIn(0f, 1f) * 0.45f)
     }
 
+    /**
+     * Outline for one facet. It is derived from the facet's own fill, so the seams between
+     * neighbouring facets of a curved shell stay quiet while real silhouettes and material
+     * breaks still read as ink. Being a pure function of the fill, it adds no paint batches.
+     */
+    fun edgeColorFor(mode: FaceMode, fill: Int): Int {
+        val ink = edgeColor(mode)
+        if (mode != FaceMode.NORMAL || alpha < 200) return ink
+        return ColorMath.withAlpha(ColorMath.mix(fill, ink, 0.46f), (ink ushr 24) and 0xFF)
+    }
+
     fun alphaFor(mode: FaceMode): Int {
         val baseAlpha = when (mode) {
             FaceMode.NORMAL -> alpha
@@ -100,16 +115,18 @@ object Shading {
     const val INK = 0xFF060A0E.toInt()
 
     private val lightDirection = floatArrayOf(-0.44f, 0.61f, 0.66f)
-    private val halfDirection: FloatArray
 
-    init {
-        val hx = lightDirection[0]
-        val hy = lightDirection[1]
-        val hz = lightDirection[2] + 1f
-        val length = sqrt(hx * hx + hy * hy + hz * hz)
-        halfDirection = floatArrayOf(hx / length, hy / length, hz / length)
-    }
+    /** Unit vector towards the key light. The cast floor shadow uses the same light. */
+    val lightX: Float get() = lightDirection[0]
+    val lightY: Float get() = lightDirection[1]
+    val lightZ: Float get() = lightDirection[2]
 
+    /**
+     * Shades one facet. [ex], [ey], [ez] is the unit vector from the model to the camera;
+     * the highlight and the rim follow it, so metal glints slide across the surface as the
+     * view orbits instead of being painted on. The default keeps the fixed front view used
+     * by the vector plate export.
+     */
     fun shade(
         material: Material,
         nx: Float,
@@ -119,9 +136,13 @@ object Shading {
         time: Float,
         faceSeed: Float = 0.5f,
         occlusion: Float = 1f,
+        ex: Float = 0f,
+        ey: Float = 0f,
+        ez: Float = 1f,
     ): Int {
+        val facing = abs(nx * ex + ny * ey + nz * ez).coerceIn(0f, 1f)
         if (material.emissive) {
-            val level = 0.52f + 0.48f * nz.coerceIn(0f, 1f)
+            val level = 0.58f + 0.42f * facing
             return material.fillColor(
                 if (mode == FaceMode.GHOST) FaceMode.GHOST else mode,
                 (level * (0.86f + 0.14f * occlusion)).coerceIn(0f, 1f),
@@ -130,21 +151,40 @@ object Shading {
         if (mode == FaceMode.GHOST) {
             return material.fillColor(FaceMode.GHOST, 0.5f)
         }
-        val dot = (nx * lightDirection[0] + ny * lightDirection[1] + nz * lightDirection[2]).coerceAtLeast(0f)
+        val lx = lightDirection[0]
+        val ly = lightDirection[1]
+        val lz = lightDirection[2]
+        val raw = nx * lx + ny * ly + nz * lz
+        // A slightly wrapped key light: the terminator is soft, like a large studio box.
+        val dot = ((raw + 0.18f) / 1.18f).coerceAtLeast(0f)
         val hemisphere = 0.5f + 0.5f * ny
-        // Key, cool fill and a grazing rim: three cheap directional responses
-        // instead of one flat light. No extra paths or shader state are added.
-        val fill = (nx * -0.55f + ny * 0.12f + nz * 0.28f).coerceAtLeast(0f)
-        val rim = (1f - abs(nz)).coerceIn(0f, 1f)
-        var t = 0.15f + 0.62f * dot + 0.12f * hemisphere
-        t += fill * material.fillLight
-        t += rim * rim * material.rimLight
-        val spec = if (material.specular > 0f) {
-            val hDot = (nx * halfDirection[0] + ny * halfDirection[1] + nz * halfDirection[2]).coerceAtLeast(0f)
-            hDot.pow(material.shininess) * material.specular
-        } else 0f
+        // Cool fill from the opposite side and a warm bounce off the stage floor.
+        val fill = (nx * 0.62f + ny * 0.10f - nz * 0.30f).coerceAtLeast(0f)
+        val bounce = (-ny).coerceAtLeast(0f)
+        val grazing = 1f - facing
+        val rim = grazing * grazing * grazing
+        var t = 0.10f + 0.64f * dot + 0.13f * hemisphere
+        t += fill * (material.fillLight + 0.05f)
+        t += bounce * 0.07f
+        t += rim * (material.rimLight * 1.9f + 0.05f)
+        var spec = 0f
+        if (material.specular > 0f) {
+            // Un-normalised half vector: |L + E|^2 = 2 + 2 L.E, so one square root per
+            // facet is avoided by comparing squared quantities.
+            val hDotRaw = nx * (lx + ex) + ny * (ly + ey) + nz * (lz + ez)
+            if (hDotRaw > 0f) {
+                val lengthSq = 2f + 2f * (lx * ex + ly * ey + lz * ez)
+                val hDotSq = if (lengthSq > 1e-4f) hDotRaw * hDotRaw / lengthSq else 0f
+                // A broad sheen under the tight glint: polished parts read as metal, not plastic.
+                spec = hDotSq * hDotSq * material.specular * 0.16f
+                // Below this the tight lobe is invisible, so the pow is skipped for most facets.
+                if (hDotSq > 0.5f) {
+                    spec += hDotSq.pow(material.shininess * 0.5f) * material.specular
+                }
+            }
+        }
         val patina = (faceSeed - 0.5f) * material.patina
-        var value = (t + spec * 0.78f + patina) * occlusion
+        var value = (t + spec * 0.42f + patina) * occlusion
         // A tiny normal-driven grain breaks up the perfectly flat facets. It is
         // deliberately absent from rubber and matt paint, stronger on polished metal.
         val seed = (material.key.hashCode() and 0xFF) * 0.017f
@@ -152,7 +192,14 @@ object Shading {
         val grainB = sin((nx * 31.4f - ny * 17.9f + nz * 11.3f + seed) * 3.7f)
         val grain = 0.005f + 0.019f * material.specular + 0.012f * material.patina
         value += grainA * grainB * grain
-        return material.fillColor(mode, value.coerceIn(0f, 1f))
+        val color = material.fillColor(mode, value.coerceIn(0f, 1f))
+        if (mode == FaceMode.DIMMED) return color
+        // The glint itself is tinted by the material and laid over the lit colour in a few
+        // coarse steps, so it stays a crisp highlight without multiplying paint batches.
+        val glint = kotlin.math.round((spec * occlusion).coerceIn(0f, 1f) * 3f) / 3f
+        if (glint <= 0f) return color
+        val tint = ColorMath.withAlpha(material.specTint, (color ushr 24) and 0xFF)
+        return ColorMath.mix(color, tint, glint * 0.78f)
     }
 
     fun alphaFor(material: Material, mode: FaceMode): Int {

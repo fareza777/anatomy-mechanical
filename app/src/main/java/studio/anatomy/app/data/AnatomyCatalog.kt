@@ -11,6 +11,7 @@ import studio.anatomy.app.objects.fusionRingSystem
 import studio.anatomy.app.objects.gearbox
 import studio.anatomy.app.objects.haloHabitat
 import studio.anatomy.app.objects.hydraulicArm
+import studio.anatomy.app.objects.hydroStation
 import studio.anatomy.app.objects.ionThruster
 import studio.anatomy.app.objects.jetPumpSystem
 import studio.anatomy.app.objects.liftSystem
@@ -68,6 +69,7 @@ object AnatomyCatalog {
             haloHabitat(),
             cyclotronSystem(),
             marsRover(),
+            hydroStation(),
         )
     }
 

@@ -3,6 +3,7 @@ package studio.anatomy.app.render
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
@@ -108,6 +109,8 @@ private class FaceSlot {
     }
 }
 
+private const val HAZE_COLOR = 0xFF0A171D.toInt()
+
 class SceneRenderer {
 
     private val slots = ArrayList<FaceSlot>()
@@ -150,9 +153,25 @@ class SceneRenderer {
     private var backdropKey: String = ""
     private var chromeBitmap: Bitmap? = null
     private var chromeKey: String = ""
+    private var lastChromeRequest: String = ""
+    private var haloShader: Shader? = null
     private var overlayBitmap: Bitmap? = null
     private var overlayKey: String = ""
     private var paintedPatterns = 0
+    private val castShadow = CastShadow()
+    private val floorMatrix = Matrix()
+    private val floorValues = FloatArray(9)
+    private val shadowDrawPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val poolPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var poolShader: Shader? = null
+    private var poolAccent = 0
+    private var glowSprite: Bitmap? = null
+    private val glowSpritePaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD) }
+    private val glowRect = android.graphics.RectF()
+    private var glowBoxes = FloatArray(4 * 16)
+    private var glowColors = IntArray(16)
+    private var glowCount = 0
+    private val hazeByBucket = FloatArray(16)
     private val worlds = ArrayList<Mat4?>()
     private val renderWorlds = ArrayList<Mat4?>()
     private val screenPoints = FloatArray(512)
@@ -186,6 +205,9 @@ class SceneRenderer {
         val chromeAt = System.nanoTime()
 
         drawList.clear()
+        glowCount = 0
+        val groundY = bounds.min.y
+        val groundScale = 1f / (bounds.size.y * 0.30f).coerceAtLeast(0.05f)
         // Dense scenes need the aggressive threshold to hold frame time; lighter models can
         // keep their thin shell strips, which read as missing panels if dropped.
         // Only speck-sized facets are dropped. Larger cut-offs punched visible holes in
@@ -198,10 +220,29 @@ class SceneRenderer {
             val world = renderWorlds[index] ?: return@forEachIndexed
             val mode = faceMode(part, request)
             val includeBackfaces = part.doubleSided || request.xray
+            val glows = part.material.emissive && mode == FaceMode.NORMAL
+            // Only scaled parts need their normals renormalised; checking one matrix row
+            // per part keeps the square root out of the per-facet loop for everything else.
+            val rowSq = world.m[0] * world.m[0] + world.m[1] * world.m[1] + world.m[2] * world.m[2]
+            val colSq = world.m[0] * world.m[0] + world.m[4] * world.m[4] + world.m[8] * world.m[8]
+            val scaled = abs(rowSq - 1f) > 0.004f || abs(colSq - 1f) > 0.004f || part.scale != V3.ONE
+            var partMinX = Float.MAX_VALUE
+            var partMaxX = -Float.MAX_VALUE
+            var partMinY = Float.MAX_VALUE
+            var partMaxY = -Float.MAX_VALUE
             part.mesh.faces.forEach { face ->
-                val nx = transformNormalX(world, face.normal)
-                val ny = transformNormalY(world, face.normal)
-                val nz = transformNormalZ(world, face.normal)
+                var nx = transformNormalX(world, face.normal)
+                var ny = transformNormalY(world, face.normal)
+                var nz = transformNormalZ(world, face.normal)
+                if (scaled) {
+                    // Scaled parts carry scaled normals; lighting needs them at unit length.
+                    val normalLength = sqrt(nx * nx + ny * ny + nz * nz)
+                    if (normalLength > 1e-6f) {
+                        nx /= normalLength
+                        ny /= normalLength
+                        nz /= normalLength
+                    }
+                }
                 val dot = nx * basis.eye.x + ny * basis.eye.y + nz * basis.eye.z
                 val backface = dot <= 0f
                 if (backface && !includeBackfaces) return@forEach
@@ -215,6 +256,7 @@ class SceneRenderer {
                 var maxY = -Float.MAX_VALUE
                 val m = world.m
                 var screenIndex = 0
+                var worldY = 0f
                 for (vertexIndex in face.indices) {
                     val vertex = part.mesh.vertices[vertexIndex]
                     val wx = m[0] * vertex.x + m[1] * vertex.y + m[2] * vertex.z + m[3]
@@ -227,6 +269,7 @@ class SceneRenderer {
                     val sy = centerY - (rx * basis.up.x + ry * basis.up.y + rz * basis.up.z) * scale
                     val d = rx * basis.eye.x + ry * basis.eye.y + rz * basis.eye.z
                     depth += d
+                    worldY += wy
                     if (sx < minX) minX = sx
                     if (sx > maxX) maxX = sx
                     if (sy < minY) minY = sy
@@ -246,7 +289,10 @@ class SceneRenderer {
                 val faceSeed = (sin(seedRaw * 1.7f) * 0.5f + 0.5f).coerceIn(0f, 1f)
                 val partHeight = part.mesh.bounds.size.y.coerceAtLeast(0.001f)
                 val heightRatio = ((firstVertex.y - part.mesh.bounds.min.y) / partHeight).coerceIn(0f, 1f)
-                val occlusion = 0.90f + 0.10f * heightRatio
+                // Contact darkening: facets close to the stage floor sit in the model's own
+                // shade, which grounds the machine instead of leaving it evenly lit.
+                val lift = ((worldY / screenIndex - groundY) * groundScale).coerceIn(0f, 1f)
+                val occlusion = (0.88f + 0.12f * heightRatio) * (0.80f + 0.20f * lift * (2f - lift))
                 val fill = Shading.shade(
                     part.material,
                     if (backface) -nx else nx,
@@ -256,13 +302,16 @@ class SceneRenderer {
                     request.anim.ambientTime,
                     faceSeed,
                     occlusion,
+                    basis.eye.x,
+                    basis.eye.y,
+                    basis.eye.z,
                 )
                 slot.count = screenIndex
                 slot.depth = depth
                 if (depth < minDepth) minDepth = depth
                 if (depth > maxDepth) maxDepth = depth
                 slot.fill = fill
-                slot.stroke = part.material.edgeColor(mode)
+                slot.stroke = part.material.edgeColorFor(mode, fill)
                 slot.strokeWidth = max(1.05f, request.density * 0.5f)
                 slot.drawStroke = request.quality == RenderQuality.FULL && mode != FaceMode.GHOST &&
                     area > 9f
@@ -279,6 +328,15 @@ class SceneRenderer {
                     slot.pattern != SurfacePattern.NONE && slot.patternStrength > 0.01f &&
                     area >= 300f
                 drawList.add(slot)
+                if (glows) {
+                    if (minX < partMinX) partMinX = minX
+                    if (maxX > partMaxX) partMaxX = maxX
+                    if (minY < partMinY) partMinY = minY
+                    if (maxY > partMaxY) partMaxY = maxY
+                }
+            }
+            if (glows && partMaxX > partMinX) {
+                addGlowBox(partMinX, partMinY, partMaxX, partMaxY, part.material.baseColor)
             }
         }
         val buildAt = System.nanoTime()
@@ -290,6 +348,7 @@ class SceneRenderer {
         val batchCount = paintDetailed(canvas, request)
         paintedAt = System.nanoTime()
 
+        drawEmissiveGlow(canvas, width, height)
         drawEffects(canvas, scene, request)
         if (request.cacheLayers) {
             drawVignette(canvas, width, height, request.quality)
@@ -387,8 +446,10 @@ class SceneRenderer {
     ) {
         if (!request.cacheLayers) {
             paintBackdrop(canvas, width, height, accent, request.quality)
+            drawLightPool(canvas, bounds, accent)
             if (request.showGrid) drawFloor(canvas, scene, request, bounds, accent)
             drawContactShadow(canvas, bounds)
+            drawCastShadow(canvas, scene, request, bounds)
             return
         }
         val key = "$width:$height:${request.pose.yaw}:${request.pose.pitch}:${request.pose.zoom}" +
@@ -396,6 +457,18 @@ class SceneRenderer {
             ":${request.focusPartId ?: "-"}" +
             ":${bounds.min.x},${bounds.min.y},${bounds.min.z},${bounds.max.x},${bounds.max.y},${bounds.max.z}"
         var bitmap = chromeBitmap
+        // While the view is moving every frame has a new key, so caching would only add a
+        // full-screen copy. Paint straight to the canvas and cache once the view settles.
+        val moving = key != lastChromeRequest
+        lastChromeRequest = key
+        if (moving && key != chromeKey) {
+            drawBackdrop(canvas, width, height, accent, request.quality)
+            drawLightPool(canvas, bounds, accent)
+            if (request.showGrid) drawFloor(canvas, scene, request, bounds, accent)
+            drawContactShadow(canvas, bounds)
+            drawCastShadow(canvas, scene, request, bounds)
+            return
+        }
         if (key != chromeKey || bitmap == null) {
             if (bitmap == null || bitmap.width != width || bitmap.height != height) {
                 bitmap?.recycle()
@@ -403,9 +476,13 @@ class SceneRenderer {
                 chromeBitmap = bitmap
             }
             val chromeCanvas = Canvas(bitmap)
-            paintBackdrop(chromeCanvas, width, height, accent, request.quality)
+            // The gradient backdrop does not depend on the view, so it is painted once and
+            // copied. Only the floor, light pool and shadows are redrawn while orbiting.
+            drawBackdrop(chromeCanvas, width, height, accent, request.quality)
+            drawLightPool(chromeCanvas, bounds, accent)
             if (request.showGrid) drawFloor(chromeCanvas, scene, request, bounds, accent)
             drawContactShadow(chromeCanvas, bounds)
+            drawCastShadow(chromeCanvas, scene, request, bounds)
             chromeKey = key
         }
         canvas.drawBitmap(bitmap, 0f, 0f, null)
@@ -422,6 +499,131 @@ class SceneRenderer {
             backdropKey = key
         }
         backdropBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+    }
+
+    /**
+     * Maps the stage floor (world X/Z at height [y], in world units) onto the screen. The
+     * camera is orthographic, so the floor plane is an exact affine image and anything
+     * painted through this matrix lies flat on the stage from every angle.
+     */
+    private fun setFloorMatrix(y: Float) {
+        projectTo(V3(0f, y, 0f), screenPoints, 0)
+        projectTo(V3(1f, y, 0f), screenPoints, 2)
+        projectTo(V3(0f, y, 1f), screenPoints, 4)
+        floorValues[0] = screenPoints[2] - screenPoints[0]
+        floorValues[1] = screenPoints[4] - screenPoints[0]
+        floorValues[2] = screenPoints[0]
+        floorValues[3] = screenPoints[3] - screenPoints[1]
+        floorValues[4] = screenPoints[5] - screenPoints[1]
+        floorValues[5] = screenPoints[1]
+        floorValues[6] = 0f
+        floorValues[7] = 0f
+        floorValues[8] = 1f
+        floorMatrix.setValues(floorValues)
+    }
+
+    /** A soft pool of key light on the stage floor under the model. */
+    private fun drawLightPool(canvas: Canvas, bounds: Aabb, accent: Int) {
+        if (poolShader == null || poolAccent != accent) {
+            val warm = ColorMath.mix(accent, 0xFFE6F4FA.toInt(), 0.55f)
+            poolShader = RadialGradient(
+                0f, 0f, 1f,
+                intArrayOf(
+                    ColorMath.withAlpha(warm, 40),
+                    ColorMath.withAlpha(warm, 19),
+                    ColorMath.withAlpha(accent, 7),
+                    0x00000000,
+                ),
+                floatArrayOf(0f, 0.38f, 0.74f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            poolAccent = accent
+        }
+        val radius = max(bounds.size.x, bounds.size.z) * 0.98f + 0.5f
+        setFloorMatrix(bounds.min.y - 0.012f)
+        canvas.save()
+        canvas.concat(floorMatrix)
+        canvas.translate(bounds.center.x, bounds.center.z)
+        canvas.scale(radius, radius)
+        poolPaint.shader = poolShader
+        canvas.drawCircle(0f, 0f, 1f, poolPaint)
+        poolPaint.shader = null
+        canvas.restore()
+    }
+
+    /**
+     * The model's real silhouette, cast on the floor by the key light. The shadow lives in
+     * floor space, so it is rasterised once per pose of the mechanism and then only
+     * re-projected: orbiting the camera costs a single bitmap draw.
+     */
+    private fun drawCastShadow(canvas: Canvas, scene: CompiledScene, request: RenderRequest, bounds: Aabb) {
+        if (request.xray && request.selectedSystem == null) return
+        val live = request.quality == RenderQuality.INTERACTIVE
+        castShadow.update(scene, renderWorlds, bounds, request.explode.hashCode(), allowStale = live)
+        val bitmap = castShadow.bitmap ?: return
+        setFloorMatrix(castShadow.floorY)
+        canvas.save()
+        canvas.concat(floorMatrix)
+        canvas.translate(castShadow.originX, castShadow.originZ)
+        canvas.scale(castShadow.worldPerPixel, castShadow.worldPerPixel)
+        shadowDrawPaint.color = 0xFF02060A.toInt()
+        shadowDrawPaint.alpha = 168
+        canvas.drawBitmap(bitmap, 0f, 0f, shadowDrawPaint)
+        canvas.restore()
+    }
+
+    private fun addGlowBox(minX: Float, minY: Float, maxX: Float, maxY: Float, color: Int) {
+        if (glowCount >= 48) return
+        if (glowCount >= glowColors.size) {
+            glowColors = glowColors.copyOf(glowColors.size * 2)
+            glowBoxes = glowBoxes.copyOf(glowBoxes.size * 2)
+        }
+        val offset = glowCount * 4
+        glowBoxes[offset] = minX
+        glowBoxes[offset + 1] = minY
+        glowBoxes[offset + 2] = maxX
+        glowBoxes[offset + 3] = maxY
+        glowColors[glowCount] = color
+        glowCount++
+    }
+
+    /**
+     * Light spill around emitters: one pre-blurred sprite per glowing part, added over the
+     * finished facets. No blur pass and no allocation per frame.
+     */
+    private fun drawEmissiveGlow(canvas: Canvas, width: Int, height: Int) {
+        if (glowCount == 0) return
+        val sprite = glowSprite ?: createGlowSprite().also { glowSprite = it }
+        val limit = width.toFloat() * height * 0.22f
+        for (i in 0 until glowCount) {
+            val offset = i * 4
+            val w = glowBoxes[offset + 2] - glowBoxes[offset]
+            val h = glowBoxes[offset + 3] - glowBoxes[offset + 1]
+            if (w * h > limit) continue
+            val cx = (glowBoxes[offset] + glowBoxes[offset + 2]) * 0.5f
+            val cy = (glowBoxes[offset + 1] + glowBoxes[offset + 3]) * 0.5f
+            val pad = max(6f, min(w, h) * 0.9f)
+            val halfW = w * 0.62f + pad
+            val halfH = h * 0.62f + pad
+            glowRect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
+            glowSpritePaint.color = glowColors[i]
+            glowSpritePaint.alpha = 60
+            canvas.drawBitmap(sprite, null, glowRect, glowSpritePaint)
+        }
+    }
+
+    private fun createGlowSprite(): Bitmap {
+        val size = 64
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.shader = RadialGradient(
+            size * 0.5f, size * 0.5f, size * 0.5f,
+            intArrayOf(0xFF000000.toInt(), 0x66000000, 0x1C000000, 0x00000000),
+            floatArrayOf(0f, 0.34f, 0.68f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        Canvas(bitmap).drawCircle(size * 0.5f, size * 0.5f, size * 0.5f, paint)
+        return bitmap
     }
 
     private fun paintBackdrop(canvas: Canvas, width: Int, height: Int, accent: Int, quality: RenderQuality) {
@@ -549,34 +751,27 @@ class SceneRenderer {
         return nice * power
     }
 
+    /**
+     * Soft ambient shade under the whole machine. The cast shadow gives the shape; this
+     * only seats the model on the stage. One cached unit gradient, laid on the floor plane.
+     */
     private fun drawContactShadow(canvas: Canvas, bounds: Aabb) {
-        val center = V3(bounds.center.x, bounds.min.y - 0.01f, bounds.center.z)
-        projectTo(center, screenPoints, 0)
-        val sx = screenPoints[0]
-        val sy = screenPoints[1]
-        val radiusWorld = max(bounds.size.x, bounds.size.z) * 0.56f
-        val radius = max(20f, radiusWorld * scale)
-        shadowPaint.shader = RadialGradient(
-            0f, 0f, radius,
-            intArrayOf(0xCC000000.toInt(), 0x66000000, 0x00000000),
-            floatArrayOf(0f, 0.55f, 1f),
+        val shader = haloShader ?: RadialGradient(
+            0f, 0f, 1f,
+            intArrayOf(0x8C000000.toInt(), 0x52000000, 0x14000000, 0x00000000),
+            floatArrayOf(0f, 0.46f, 0.80f, 1f),
             Shader.TileMode.CLAMP,
-        )
+        ).also { haloShader = it }
+        val radius = max(bounds.size.x, bounds.size.z) * 0.74f + 0.15f
+        setFloorMatrix(bounds.min.y - 0.011f)
         canvas.save()
-        canvas.translate(sx, sy)
-        canvas.scale(1.9f, 0.62f)
-        canvas.drawCircle(0f, 0f, radius, shadowPaint)
-        // A wider, fainter halo makes the model sit in the stage instead of
-        // floating on a hard shadow. It is painted into the cached chrome layer.
-        shadowPaint.shader = RadialGradient(
-            0f, 0f, radius * 1.45f,
-            intArrayOf(0x38000000, 0x16000000, 0x00000000),
-            floatArrayOf(0f, 0.58f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        canvas.drawCircle(0f, 0f, radius * 1.45f, shadowPaint)
-        canvas.restore()
+        canvas.concat(floorMatrix)
+        canvas.translate(bounds.center.x, bounds.center.z)
+        canvas.scale(radius, radius)
+        shadowPaint.shader = shader
+        canvas.drawCircle(0f, 0f, 1f, shadowPaint)
         shadowPaint.shader = null
+        canvas.restore()
     }
 
     private fun drawEffects(canvas: Canvas, scene: CompiledScene, request: RenderRequest) {
@@ -937,8 +1132,14 @@ class SceneRenderer {
                 .coerceIn(0, depthBuckets - 1)
         }
         drawList.sortWith(batchComparator)
+        // Aerial perspective: the far side of the machine sinks a little into the stage
+        // colour. It is applied per depth slice, when a batch is painted, so it is free.
+        for (bucket in 0 until depthBuckets) {
+            hazeByBucket[bucket] = 0.24f * (1f - bucket / (depthBuckets - 1f))
+        }
 
         var batchCount = 0
+        var batchBucket = 0
         var batchFill = Int.MIN_VALUE
         var batchStroke = Int.MIN_VALUE
         var batchStrokeWidth = 0f
@@ -948,10 +1149,11 @@ class SceneRenderer {
         fun flushBatch() {
             if (!hasBatch) return
             batchCount++
-            fillPaint.color = batchFill
+            val haze = hazeByBucket[batchBucket]
+            fillPaint.color = hazed(batchFill, haze)
             canvas.drawPath(batchPath, fillPaint)
             if (batchDrawsStroke) {
-                strokePaint.color = batchStroke
+                strokePaint.color = hazed(batchStroke, haze)
                 strokePaint.strokeWidth = batchStrokeWidth
                 canvas.drawPath(batchPath, strokePaint)
             }
@@ -960,6 +1162,7 @@ class SceneRenderer {
         }
         for (slot in drawList) {
             if (hasBatch && (
+                    slot.bucket != batchBucket ||
                     slot.fill != batchFill ||
                     slot.stroke != batchStroke ||
                     slot.drawStroke != batchDrawsStroke ||
@@ -969,6 +1172,7 @@ class SceneRenderer {
                 flushBatch()
             }
             if (!hasBatch) {
+                batchBucket = slot.bucket
                 batchFill = slot.fill
                 batchStroke = slot.stroke
                 batchStrokeWidth = slot.strokeWidth
@@ -985,6 +1189,12 @@ class SceneRenderer {
         flushBatch()
         paintedPatterns = drawSurfacePatterns(canvas, request)
         return batchCount
+    }
+
+    private fun hazed(color: Int, amount: Float): Int {
+        if (amount <= 0.004f) return color
+        val alpha = (color ushr 24) and 0xFF
+        return ColorMath.mix(color, ColorMath.withAlpha(HAZE_COLOR, alpha), amount)
     }
 
     /**

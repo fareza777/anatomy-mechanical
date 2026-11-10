@@ -529,15 +529,15 @@ fun StudioScreen(
         } else {
             Column(Modifier.fillMaxSize()) {
                 if (!fullscreen) {
-                    StudioTopBar(
+                    // Portrait keeps the title inside the top bar, so the 3D stage gets the
+                    // height a separate title block used to take.
+                    StudioHeader(
                         spec = spec,
                         isFavorite = isFavorite,
                         onBack = onBack,
                         onFavorite = onToggleFavorite,
                         onExport = { showExport = true },
-                        compact = false,
                     )
-                    StudioTitle(spec = spec, compact = false)
                     Spacer(Modifier.height(10.dp))
                 }
                 Box(
@@ -1026,6 +1026,86 @@ private fun StudioTopBar(
             letterSpacing = 1.1f,
             modifier = Modifier.weight(1f),
         )
+        GlassIconButton(
+            icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+            contentDescription = "Favorite",
+            onClick = onFavorite,
+            size = 38.dp,
+            iconSize = 17.dp,
+            tint = if (isFavorite) colors.amber else colors.text,
+        )
+        Spacer(Modifier.width(8.dp))
+        GlassIconButton(
+            icon = Icons.Outlined.Share,
+            contentDescription = "Export plate",
+            onClick = onExport,
+            size = 38.dp,
+            iconSize = 16.dp,
+        )
+    }
+}
+
+/** One-row portrait header: back, the study's identity, then favourite and export. */
+@Composable
+private fun StudioHeader(
+    spec: ObjectSpec,
+    isFavorite: Boolean,
+    onBack: () -> Unit,
+    onFavorite: () -> Unit,
+    onExport: () -> Unit,
+) {
+    val colors = LocalAnatomyColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp)
+            .padding(top = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlassIconButton(
+            icon = Icons.Outlined.ArrowBack,
+            contentDescription = "Back to atlas",
+            onClick = onBack,
+            size = 40.dp,
+            iconSize = 18.dp,
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(5.dp).background(colors.accent, CircleShape))
+                Spacer(Modifier.width(6.dp))
+                MonoLabel(
+                    "${spec.index.toString().padStart(2, '0')} / ${spec.category}",
+                    color = colors.accent,
+                    fontSize = 8,
+                    letterSpacing = 1.2f,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${spec.parts.size} PARTS",
+                    color = colors.textTertiary,
+                    fontFamily = JetBrainsMono,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.8.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                spec.title,
+                color = colors.text,
+                fontFamily = SpaceGrotesk,
+                fontWeight = FontWeight.Medium,
+                fontSize = 22.sp,
+                lineHeight = 25.sp,
+                letterSpacing = (-0.7).sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
         GlassIconButton(
             icon = if (isFavorite) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
             contentDescription = "Favorite",
