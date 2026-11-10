@@ -6,6 +6,7 @@ import studio.anatomy.app.model.Part
 import studio.anatomy.app.render.Geo
 import studio.anatomy.app.render.Material
 import studio.anatomy.app.render.Materials
+import studio.anatomy.app.render.MeshBuilder
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -77,6 +78,79 @@ internal fun displayBase(
         Part(
             id = "${prefix}_fasteners", name = "Deck fasteners", system = system, assembly = assembly,
             mesh = Geo.boltSet(fasteners, 0.055f, 0.03f), material = Materials.titanium,
+        )
+    )
+
+    // A few real, merged decals give the shared plinth the read of an engineered
+    // instrument instead of a smooth box. They are tiny geometry: no textures,
+    // no extra draw calls, and the renderer's existing face batching absorbs them.
+    val plateX = width * 0.28f
+    val plateZ = depth * 0.30f
+    val detailY = top + 0.024f
+    val seams = MeshBuilder().apply {
+        for (x in listOf(-width * 0.25f, 0f, width * 0.25f)) {
+            addMesh(
+                Geo.box(0.010f, 0.006f, depth * 0.34f),
+                Mat4.translation(V3(x, detailY, -depth * 0.12f)),
+            )
+        }
+        for (z in listOf(-depth * 0.28f, depth * 0.28f)) {
+            addMesh(
+                Geo.box(width * 0.44f, 0.006f, 0.010f),
+                Mat4.translation(V3(0f, detailY, z)),
+            )
+        }
+        // Recessed data-plate bezel and four tiny fasteners.
+        addMesh(
+            Geo.slab(0.29f, 0.17f, 0.012f, cornerRadius = 0.018f, bevel = 0.003f),
+            Mat4.translation(V3(plateX, top + 0.018f, plateZ)),
+        )
+        for (dx in listOf(-0.115f, 0.115f)) {
+            for (dz in listOf(-0.060f, 0.060f)) {
+                addMesh(
+                    Geo.hexBolt(0.012f, 0.008f),
+                    Mat4.translation(V3(plateX + dx, top + 0.028f, plateZ + dz)),
+                )
+            }
+        }
+        for (i in 0 until 3) {
+            addMesh(
+                Geo.box(0.12f, 0.004f, 0.007f),
+                Mat4.translation(V3(plateX - 0.015f, top + 0.031f, plateZ - 0.026f + i * 0.026f)),
+            )
+        }
+    }.build()
+    parts.add(
+        Part(
+            id = "${prefix}_panel_seams", name = "Deck panel seams", system = system, assembly = assembly,
+            mesh = seams, material = Materials.graphite,
+        )
+    )
+    val dataPlate = Geo.slab(
+        0.215f, 0.105f, 0.008f,
+        cornerRadius = 0.009f, bevel = 0.002f, segments = 2,
+    ).transformed(Mat4.translation(V3(plateX, top + 0.024f, plateZ)))
+    parts.add(
+        Part(
+            id = "${prefix}_data_plate", name = "Serial data plate", system = system, assembly = assembly,
+            mesh = dataPlate, material = Materials.labelPaper,
+        )
+    )
+    val hazard = MeshBuilder().apply {
+        val baseX = -width * 0.33f
+        val baseZ = depth * 0.31f
+        for (i in 0 until 4) {
+            addMesh(
+                Geo.box(0.14f, 0.006f, 0.018f),
+                Mat4.translation(V3(baseX + i * 0.085f, top + 0.025f, baseZ))
+                    .multiply(Mat4.rotateY(-34f)),
+            )
+        }
+    }.build()
+    parts.add(
+        Part(
+            id = "${prefix}_hazard", name = "Service hazard stripe", system = system, assembly = assembly,
+            mesh = hazard, material = Materials.paintOrange,
         )
     )
     return parts

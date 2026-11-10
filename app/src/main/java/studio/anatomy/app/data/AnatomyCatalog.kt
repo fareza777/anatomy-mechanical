@@ -7,9 +7,16 @@ import studio.anatomy.app.objects.arachnid
 import studio.anatomy.app.objects.cameraLens
 import studio.anatomy.app.objects.deltaRobot
 import studio.anatomy.app.objects.gearbox
+import studio.anatomy.app.objects.fusionRingSystem
 import studio.anatomy.app.objects.hydraulicArm
 import studio.anatomy.app.objects.ionThruster
+import studio.anatomy.app.objects.jetPumpSystem
+import studio.anatomy.app.objects.liftSystem
+import studio.anatomy.app.objects.maglevTransitSystem
+import studio.anatomy.app.objects.orbitalSolarSystem
+import studio.anatomy.app.objects.pulseSystem
 import studio.anatomy.app.objects.quadcopter
+import studio.anatomy.app.objects.qubitVaultSystem
 import studio.anatomy.app.objects.robotArm
 import studio.anatomy.app.objects.roboticHand
 import studio.anatomy.app.objects.rocketEngine
@@ -18,7 +25,9 @@ import studio.anatomy.app.objects.teslaTurbine
 import studio.anatomy.app.objects.turbofan
 import studio.anatomy.app.objects.v8Engine
 import studio.anatomy.app.objects.watchMovement
+import studio.anatomy.app.objects.windGridSystem
 import studio.anatomy.app.objects.windTurbine
+import studio.anatomy.app.objects.waterWorksSystem
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -44,6 +53,15 @@ object AnatomyCatalog {
             hydraulicArm(),
             spindle(),
             teslaTurbine(),
+            liftSystem(),
+            jetPumpSystem(),
+            windGridSystem(),
+            pulseSystem(),
+            waterWorksSystem(),
+            orbitalSolarSystem(),
+            fusionRingSystem(),
+            qubitVaultSystem(),
+            maglevTransitSystem(),
         )
     }
 

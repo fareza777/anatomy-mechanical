@@ -81,14 +81,17 @@ object RemoveAds {
                 ),
             )
             .build()
-        billing.queryProductDetailsAsync(params) { result, details ->
+        billing.queryProductDetailsAsync(params) { result, queryResult ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) {
                 Log.w(TAG, "Product query failed: ${result.responseCode} ${result.debugMessage}")
                 return@queryProductDetailsAsync
             }
-            val item = details.firstOrNull() ?: return@queryProductDetailsAsync
+            val item = queryResult.productDetailsList.firstOrNull()
+                ?: return@queryProductDetailsAsync
             product = item
-            item.oneTimePurchaseOfferDetails?.formattedPrice?.let { price = it }
+            val formatted = item.oneTimePurchaseOfferDetails?.formattedPrice
+                ?: item.oneTimePurchaseOfferDetailsList?.firstOrNull()?.formattedPrice
+            if (formatted != null) price = formatted
         }
     }
 

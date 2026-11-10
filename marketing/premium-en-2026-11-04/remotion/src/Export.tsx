@@ -1,0 +1,2 @@
+import React from'react';import{useVideoConfig}from'remotion';import{Base,Copy,Phone}from'./design';
+export const Export=()=>{const{width,height}=useVideoConfig();const v=height>width;return <Base light><Copy light tag="05 / CREATE + KEEP" title={['Take the study','with you.']} body="Export PNG and SVG plates. Keep exploring the 3D collection offline."/><Phone src="phone-export-done" x={v?250:1210} y={v?670:105} w={v?550:398}/></Base>}

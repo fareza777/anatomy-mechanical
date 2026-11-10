@@ -29,7 +29,7 @@ private const val AR_HEAD = "SENSOR HEAD"
 private const val AR_LEGS = "LEG ARRAY"
 private const val AR_STAND = "DISPLAY"
 
-private const val AR_BODY_Y = 1.04f
+private const val AR_BODY_Y = 0.99f
 private val LEG_Z = floatArrayOf(-0.36f, -0.12f, 0.12f, 0.36f)
 
 private fun ball(rx: Float, ry: Float, rz: Float, segments: Int = 22, rings: Int = 11): Mesh =
@@ -144,7 +144,8 @@ fun arachnid(): ObjectSpec {
                 Mat4.translation(
                     V3(
                         0f,
-                        0.014f * sin(ctx.machineTime * 1.9f) * (0.35f + 0.65f * ctx.control),
+                        0.009f * (0.5f + 0.5f * sin(ctx.machineTime * 9.2f)) *
+                            (0.35f + 0.65f * ctx.control),
                         0f,
                     ),
                 )
@@ -343,9 +344,11 @@ fun arachnid(): ObjectSpec {
     listOf(-1f, 1f).forEach { side ->
         LEG_Z.forEachIndexed { i, z ->
             val leg = (if (side < 0f) 0 else 4) + i
-            val phase = leg * 0.78f
+            // Diagonal tetrapod: left front steps with right rear, and so on. The old
+            // per-leg phase left all eight legs moving almost together, which read as a
+            // slow mechanical shudder instead of a walk.
+            val phase = ((i + if (side < 0f) 0 else 1) % 2) * Math.PI.toFloat()
             val base = "ar_leg${leg}"
-            val zSign = if (side < 0f) -1f else 1f
             parts.add(
                 Part(
                     id = "${base}_hip", name = "Leg ${leg + 1} hip", system = AR_FRAME, assembly = AR_LEGS,
@@ -361,10 +364,14 @@ fun arachnid(): ObjectSpec {
                     mesh = femur, material = Materials.titanium,
                     origin = V3(0.20f, 0f, 0f), parent = "${base}_hip",
                     animate = { ctx ->
-                        Mat4.rotateZ(
-                            zSign * (-16f + 6.5f * sin(ctx.machineTime * 2.2f + phase) *
-                                (0.35f + 0.65f * ctx.control)),
-                        )
+                        val effort = 0.35f + 0.65f * ctx.control
+                        val gait = ctx.machineTime * 4.6f + phase
+                        val lift = 0.5f + 0.5f * sin(gait)
+                        // The hip was already mirrored by its 180° Y rotation, so both
+                        // sides must use the same Z sign. Applying zSign here folded the
+                        // right tibia upward and left it hanging below the deck.
+                        Mat4.rotateY(2.5f * sin(gait + 0.3f) * effort)
+                            .multiply(Mat4.rotateZ(22f + 4.5f * lift * effort))
                     },
                     explode = V3(side * 0.6f, 0.3f, 0f),
                 ),
@@ -375,10 +382,10 @@ fun arachnid(): ObjectSpec {
                     mesh = tibia, material = Materials.titanium,
                     origin = V3(0.82f, 0f, 0f), parent = "${base}_femur",
                     animate = { ctx ->
-                        Mat4.rotateZ(
-                            zSign * (84f + 5.5f * sin(ctx.machineTime * 2.2f + phase + 1.1f) *
-                                (0.35f + 0.65f * ctx.control)),
-                        )
+                        val effort = 0.35f + 0.65f * ctx.control
+                        val gait = ctx.machineTime * 4.6f + phase
+                        val fold = 0.5f + 0.5f * sin(gait + 0.9f)
+                        Mat4.rotateZ(-105f + 8f * fold * effort)
                     },
                     explode = V3(side * 0.75f, 0.2f, 0f),
                 ),
@@ -389,10 +396,10 @@ fun arachnid(): ObjectSpec {
                     mesh = tarsus, material = Materials.darkSteel,
                     origin = V3(0.84f, 0f, 0f), parent = "${base}_tibia",
                     animate = { ctx ->
-                        Mat4.rotateZ(
-                            zSign * (12f + 4.0f * sin(ctx.machineTime * 2.2f + phase + 2.2f) *
-                                (0.35f + 0.65f * ctx.control)),
-                        )
+                        val effort = 0.35f + 0.65f * ctx.control
+                        val gait = ctx.machineTime * 4.6f + phase
+                        val flex = 0.5f + 0.5f * sin(gait + 1.6f)
+                        Mat4.rotateZ(70f + 2f * flex * effort)
                     },
                     explode = V3(side * 0.9f, 0.1f, 0f),
                 ),

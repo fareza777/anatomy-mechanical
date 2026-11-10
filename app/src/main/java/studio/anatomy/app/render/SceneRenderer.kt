@@ -40,6 +40,7 @@ data class RenderRequest(
     val anim: AnimContext,
     val explode: Map<String, Float> = emptyMap(),
     val selectedSystem: String? = null,
+    val focusPartId: String? = null,
     val xray: Boolean = false,
     val showGrid: Boolean = true,
     val quality: RenderQuality = RenderQuality.FULL,
@@ -49,6 +50,7 @@ data class RenderRequest(
     val safeRight: Float = -1f,
     val density: Float = 2.6f,
     val cacheLayers: Boolean = true,
+    val detail: Boolean = true,
 )
 
 data class HotspotPin(
@@ -72,6 +74,7 @@ data class RenderReport(
     val chromeMillis: Long = 0,
     val buildMillis: Long = 0,
     val sortMillis: Long = 0,
+    val patterns: Int = 0,
 )
 
 private class FaceSlot {
@@ -88,6 +91,11 @@ private class FaceSlot {
     var maxX = 0f
     var minY = 0f
     var maxY = 0f
+    var area = 0f
+    var pattern = SurfacePattern.NONE
+    var patternStrength = 0f
+    var patternSeed = 0f
+    var drawPattern = false
 
     fun ensureCapacity(vertices: Int) {
         val needed = vertices * 2
@@ -144,6 +152,7 @@ class SceneRenderer {
     private var chromeKey: String = ""
     private var overlayBitmap: Bitmap? = null
     private var overlayKey: String = ""
+    private var paintedPatterns = 0
     private val worlds = ArrayList<Mat4?>()
     private val renderWorlds = ArrayList<Mat4?>()
     private val screenPoints = FloatArray(512)
@@ -167,9 +176,10 @@ class SceneRenderer {
         val accent = scene.spec.accent
         val bounds = scene.bounds(request.explode)
         val visualBounds = expand(bounds, 1.14f)
-        target = visualBounds.center + scene.spec.focusOffset
+        val framing = sceneFraming(scene, request)
+        target = framing.target
         basis = cameraBasis(request.pose)
-        computeFit(request, visualBounds, width, height)
+        computeFit(request, framing.fitBounds, width, height)
         computeWorlds(scene, request)
 
         drawChrome(canvas, scene, request, bounds, accent, width, height)
@@ -231,6 +241,12 @@ class SceneRenderer {
                 if (area < minArea) return@forEach
                 depth /= screenIndex
                 if (maxX < 0f || minX > width.toFloat() || maxY < 0f || minY > height.toFloat()) return@forEach
+                val firstVertex = part.mesh.vertices[face.indices[0]]
+                val seedRaw = firstVertex.x * 73.1f + firstVertex.y * 19.7f + firstVertex.z * 41.3f + index * 0.37f
+                val faceSeed = (sin(seedRaw * 1.7f) * 0.5f + 0.5f).coerceIn(0f, 1f)
+                val partHeight = part.mesh.bounds.size.y.coerceAtLeast(0.001f)
+                val heightRatio = ((firstVertex.y - part.mesh.bounds.min.y) / partHeight).coerceIn(0f, 1f)
+                val occlusion = 0.90f + 0.10f * heightRatio
                 val fill = Shading.shade(
                     part.material,
                     if (backface) -nx else nx,
@@ -238,6 +254,8 @@ class SceneRenderer {
                     if (backface) -nz else nz,
                     mode,
                     request.anim.ambientTime,
+                    faceSeed,
+                    occlusion,
                 )
                 slot.count = screenIndex
                 slot.depth = depth
@@ -252,13 +270,23 @@ class SceneRenderer {
                 slot.maxX = maxX
                 slot.minY = minY
                 slot.maxY = maxY
+                slot.area = area
+                slot.pattern = part.material.pattern
+                slot.patternStrength = part.material.patternStrength
+                slot.patternSeed = faceSeed
+                slot.drawPattern = request.quality == RenderQuality.FULL &&
+                    mode != FaceMode.GHOST && mode != FaceMode.DIMMED &&
+                    slot.pattern != SurfacePattern.NONE && slot.patternStrength > 0.01f &&
+                    area >= 300f
                 drawList.add(slot)
             }
         }
         val buildAt = System.nanoTime()
         projectedAt = System.nanoTime()
-        // The batched vertex path is not reliable on older mobile GPU drivers and loses
-        // large n-gon surfaces, so every frame uses the same correct path painter.
+        // The batched vertex path was tested for moving frames and produced
+        // missing n-gon surfaces on this device, so every frame uses the same
+        // correct path painter. Performance is controlled with resolution and
+        // culling instead of changing the geometry pipeline.
         val batchCount = paintDetailed(canvas, request)
         paintedAt = System.nanoTime()
 
@@ -286,6 +314,7 @@ class SceneRenderer {
             chromeMillis = (chromeAt - started) / 1_000_000,
             buildMillis = (buildAt - chromeAt) / 1_000_000,
             sortMillis = (projectedAt - buildAt) / 1_000_000,
+            patterns = paintedPatterns,
         )
     }
 
@@ -364,6 +393,7 @@ class SceneRenderer {
         }
         val key = "$width:$height:${request.pose.yaw}:${request.pose.pitch}:${request.pose.zoom}" +
             ":${request.explode.hashCode()}:${request.showGrid}:$accent:${request.quality}" +
+            ":${request.focusPartId ?: "-"}" +
             ":${bounds.min.x},${bounds.min.y},${bounds.min.z},${bounds.max.x},${bounds.max.y},${bounds.max.z}"
         var bitmap = chromeBitmap
         if (key != chromeKey || bitmap == null) {
@@ -397,7 +427,7 @@ class SceneRenderer {
     private fun paintBackdrop(canvas: Canvas, width: Int, height: Int, accent: Int, quality: RenderQuality) {
         backgroundPaint.shader = LinearGradient(
             0f, 0f, 0f, height.toFloat(),
-            intArrayOf(0xFF0E1A21.toInt(), 0xFF091117.toInt(), 0xFF050A0E.toInt()),
+            intArrayOf(0xFF12242B.toInt(), 0xFF0A141A.toInt(), 0xFF04090D.toInt()),
             floatArrayOf(0f, 0.52f, 1f),
             Shader.TileMode.CLAMP,
         )
@@ -412,6 +442,15 @@ class SceneRenderer {
         )
         glowPaint.xfermode = null
         canvas.drawCircle(width * 0.5f, centerY, max(width, height) * 0.62f, glowPaint)
+        glowPaint.shader = RadialGradient(
+            width * 0.16f,
+            height * 0.82f,
+            max(width, height) * 0.54f,
+            intArrayOf(ColorMath.withAlpha(accent, 12), ColorMath.withAlpha(accent, 4), 0x00000000),
+            floatArrayOf(0f, 0.56f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(width * 0.16f, height * 0.82f, max(width, height) * 0.54f, glowPaint)
         glowPaint.shader = null
         if (quality == RenderQuality.FULL) {
             linePaint.color = ColorMath.withAlpha(0xFFFFFFFF.toInt(), 9)
@@ -527,6 +566,15 @@ class SceneRenderer {
         canvas.translate(sx, sy)
         canvas.scale(1.9f, 0.62f)
         canvas.drawCircle(0f, 0f, radius, shadowPaint)
+        // A wider, fainter halo makes the model sit in the stage instead of
+        // floating on a hard shadow. It is painted into the cached chrome layer.
+        shadowPaint.shader = RadialGradient(
+            0f, 0f, radius * 1.45f,
+            intArrayOf(0x38000000, 0x16000000, 0x00000000),
+            floatArrayOf(0f, 0.58f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        canvas.drawCircle(0f, 0f, radius * 1.45f, shadowPaint)
         canvas.restore()
         shadowPaint.shader = null
     }
@@ -796,10 +844,18 @@ class SceneRenderer {
         )
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), vignettePaint)
         vignettePaint.shader = null
+        if (quality == RenderQuality.FULL) drawGrain(canvas, width, height)
     }
 
     private fun drawGrain(canvas: Canvas, width: Int, height: Int) {
-        // Baked into the cached vignette layer.
+        // Baked into the cached vignette layer, so this costs nothing per frame. The
+        // alpha is low enough to read as a photographic finish rather than noise.
+        if (grainShader == null) grainShader = createGrainShader()
+        grainPaint.shader = grainShader
+        grainPaint.alpha = 9
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), grainPaint)
+        grainPaint.shader = null
+        grainPaint.alpha = 255
     }
 
     @Suppress("unused")
@@ -861,7 +917,10 @@ class SceneRenderer {
 
     /** Crisp anti-aliased facets for a still scene: grouped fills, then inked outlines. */
     private fun paintDetailed(canvas: Canvas, request: RenderRequest): Int {
-        fillPaint.isAntiAlias = true
+        // Anti-aliasing is expensive when the scene is rebuilt every frame. Keep it
+        // for still inspection and let the lower-resolution live buffer hide the
+        // slightly harder facet edges during motion.
+        fillPaint.isAntiAlias = request.quality == RenderQuality.FULL
         var minDepth = Float.MAX_VALUE
         var maxDepth = -Float.MAX_VALUE
         for (slot in drawList) {
@@ -871,7 +930,7 @@ class SceneRenderer {
         // Wider depth slices let more same-coloured facets share one path. Facets in the
         // same slice still sort by depth, so the only reordering is between identical
         // shades, which is invisible.
-        val depthBuckets = 14
+        val depthBuckets = if (request.quality == RenderQuality.INTERACTIVE) 6 else 14
         val depthSpan = (maxDepth - minDepth).coerceAtLeast(0.001f)
         for (slot in drawList) {
             slot.bucket = (((slot.depth - minDepth) / depthSpan) * (depthBuckets - 1)).toInt()
@@ -924,7 +983,96 @@ class SceneRenderer {
             batchPath.close()
         }
         flushBatch()
+        paintedPatterns = drawSurfacePatterns(canvas, request)
         return batchCount
+    }
+
+    /**
+     * Texture-like marks without texture memory or per-face bitmap sampling.
+     * Only a small budget of large, opaque faces is decorated, and only at FULL
+     * quality. The pass is clipped to the face and reuses one Path/Paint pair.
+     */
+    private fun drawSurfacePatterns(canvas: Canvas, request: RenderRequest): Int {
+        if (request.quality != RenderQuality.FULL || !request.detail) return 0
+        var count = 0
+        for (slot in drawList) {
+            if (!slot.drawPattern) continue
+            if (count >= 8) break
+            val width = slot.maxX - slot.minX
+            val height = slot.maxY - slot.minY
+            if (width < 14f || height < 10f) continue
+            path.rewind()
+            for (i in 0 until slot.count) {
+                val x = slot.screen[i * 2]
+                val y = slot.screen[i * 2 + 1]
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            path.close()
+            val alpha = (slot.patternStrength * 46f).toInt().coerceIn(10, 46)
+            val lightSurface = ColorMath.luminance(slot.fill) > 0.40f
+            linePaint.color = if (lightSurface) {
+                ColorMath.withAlpha(0xFF071014.toInt(), alpha)
+            } else {
+                ColorMath.withAlpha(0xFFE4F4EE.toInt(), alpha)
+            }
+            linePaint.strokeWidth = if (slot.pattern == SurfacePattern.GRID) 0.85f else 0.65f
+            canvas.save()
+            canvas.clipPath(path)
+            val left = slot.minX + 2f
+            val top = slot.minY + 2f
+            val right = slot.maxX - 2f
+            val bottom = slot.maxY - 2f
+            when (slot.pattern) {
+                SurfacePattern.BRUSHED -> {
+                    for (i in 0..6) {
+                        val x = left + (right - left) * (i / 7f)
+                        canvas.drawLine(x, bottom, x + height * 0.32f, top, linePaint)
+                    }
+                }
+                SurfacePattern.PANEL -> {
+                    val x = left + (right - left) * 0.36f
+                    val y = top + (bottom - top) * 0.58f
+                    canvas.drawLine(x, top, x, bottom, linePaint)
+                    canvas.drawLine(left, y, right, y, linePaint)
+                    canvas.drawCircle(x, y, 1.8f, fillPaint.apply { color = linePaint.color })
+                }
+                SurfacePattern.GRID -> {
+                    for (i in 1..4) {
+                        val x = left + (right - left) * (i / 5f)
+                        val y = top + (bottom - top) * (i / 5f)
+                        canvas.drawLine(x, top, x, bottom, linePaint)
+                        canvas.drawLine(left, y, right, y, linePaint)
+                    }
+                }
+                SurfacePattern.SPECKLE -> {
+                    for (i in 0 until 14) {
+                        val a = sin((slot.patternSeed * 31f + i * 12.9898f)) * 0.5f + 0.5f
+                        val b = sin((slot.patternSeed * 57f + i * 78.233f)) * 0.5f + 0.5f
+                        val x = left + (right - left) * a
+                        val y = top + (bottom - top) * b
+                        canvas.drawCircle(x, y, if (i % 3 == 0) 1.15f else 0.7f, fillPaint.apply { color = linePaint.color })
+                    }
+                }
+                SurfacePattern.PATINA -> {
+                    for (i in 0 until 9) {
+                        val a = sin((slot.patternSeed * 47f + i * 9.73f)) * 0.5f + 0.5f
+                        val b = sin((slot.patternSeed * 23f + i * 17.41f)) * 0.5f + 0.5f
+                        canvas.drawCircle(left + (right - left) * a, top + (bottom - top) * b, 2.2f, fillPaint.apply { color = linePaint.color })
+                    }
+                }
+                SurfacePattern.HAZARD -> {
+                    for (i in 0..5) {
+                        val x = left + (right - left) * (i / 6f)
+                        canvas.drawLine(x, bottom, x + height * 0.55f, top, linePaint)
+                    }
+                }
+                SurfacePattern.NONE -> Unit
+            }
+            canvas.restore()
+            count++
+        }
+        fillPaint.color = 0xFFFFFFFF.toInt()
+        return count
     }
 
     /** Cheap flat-shaded facets, used only while the camera or mechanism is moving. */

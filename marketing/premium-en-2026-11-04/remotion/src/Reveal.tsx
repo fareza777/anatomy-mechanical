@@ -1,0 +1,2 @@
+import React from 'react';import{useVideoConfig}from'remotion';import{Base,Copy,Phone}from'./design';
+export const Reveal=()=>{const{width,height}=useVideoConfig();const v=height>width;return <Base><Copy tag="GO BENEATH THE SURFACE." title={['Now see','how it works.']} body="Anatomy Studio. Your interactive 3D technical atlas."/><Phone src="phone-cutaway" x={v?270:1260} y={v?670:130} w={v?530:368} rotate={v?0:4}/></Base>}

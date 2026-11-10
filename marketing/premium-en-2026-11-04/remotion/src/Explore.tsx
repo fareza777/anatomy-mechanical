@@ -1,0 +1,2 @@
+import React from'react';import{useVideoConfig}from'remotion';import{Base,Copy,Phone}from'./design';
+export const Explore=()=>{const{width,height}=useVideoConfig();const v=height>width;return <Base light><Copy light tag="01 / EXPLORE" title={['Every angle.','A new discovery.']} body="Orbit detailed 3D machines. Inspect the parts that bring them together."/><Phone src="phone-studio-finalrender" x={v?250:1210} y={v?670:105} w={v?550:398} rotate={-3}/></Base>}

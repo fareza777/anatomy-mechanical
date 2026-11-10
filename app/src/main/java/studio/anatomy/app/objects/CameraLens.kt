@@ -219,6 +219,7 @@ fun cameraLens(): ObjectSpec {
             animate = { ctx ->
                 val scale = 1.12f - 0.50f * ctx.control
                 Mat4.scale(V3(1f, scale, scale))
+                    .multiply(Mat4.rotateX(ctx.machineTime * (5f + 11f * ctx.control)))
             },
             explode = V3(0f, 0.4f, 0.95f),
         )
@@ -256,7 +257,7 @@ fun cameraLens(): ObjectSpec {
             id = "lens_focus", name = "Focus ring", system = LENS_BODY, assembly = L_FOCUS,
             mesh = focusRing, material = Materials.graphite,
             origin = V3(0f, AXIS_Y, 0f),
-            animate = { ctx -> Mat4.rotateX(12f * sin(ctx.machineTime * 0.5f) * ctx.control) },
+            animate = { ctx -> Mat4.rotateX(38f * sin(ctx.machineTime * 0.5f) * ctx.control) },
             explode = V3(0f, 1.2f, 0f),
         )
     )

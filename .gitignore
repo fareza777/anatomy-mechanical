@@ -10,3 +10,7 @@ keystore.properties
 *.keystore
 docs/screenshots/model-check/
 .cloud-attachments/
+
+# Build artefacts and large media
+releases/
+marketing/**/*.mp4

@@ -1,6 +1,5 @@
 package studio.anatomy.app.render
 
-import studio.anatomy.app.core.Aabb
 import studio.anatomy.app.core.Mat4
 import studio.anatomy.app.core.V3
 import studio.anatomy.app.core.cameraBasis
@@ -24,22 +23,22 @@ data class ProjectedHotspot(
 object HotspotProjector {
 
     fun project(scene: CompiledScene, request: RenderRequest): List<ProjectedHotspot> {
-        val bounds = scene.bounds(request.explode)
-        val visual = expand(bounds, 1.14f)
-        val target = visual.center + scene.spec.focusOffset
+        val framing = sceneFraming(scene, request)
+        val target = framing.target
         val basis = cameraBasis(request.pose)
 
         val side = request.safeSide
+        val rightSide = if (request.safeRight >= 0f) request.safeRight else side
         val top = request.safeTop
         val bottom = request.safeBottom
-        val availableWidth = (request.width - side * 2f - 16f).coerceAtLeast(40f)
+        val availableWidth = (request.width - side - rightSide - 16f).coerceAtLeast(40f)
         val availableHeight = (request.height - top - bottom - 8f).coerceAtLeast(40f)
-        val centerX = request.width * 0.5f
+        val centerX = side + availableWidth * 0.5f
         val centerY = top + availableHeight * 0.5f
 
         var maxX = 0.001f
         var maxY = 0.001f
-        visual.corners().forEach { corner ->
+        framing.fitBounds.corners().forEach { corner ->
             val rx = corner.x - target.x
             val ry = corner.y - target.y
             val rz = corner.z - target.z
@@ -77,12 +76,6 @@ object HotspotProjector {
             val sy = centerY - (rx * basis.up.x + ry * basis.up.y + rz * basis.up.z) * scale
             ProjectedHotspot(hotspot, index + 1, sx, sy)
         }
-    }
-
-    private fun expand(bounds: Aabb, factor: Float): Aabb {
-        val center = bounds.center
-        val half = bounds.size * (factor * 0.5f)
-        return Aabb(center - half, center + half)
     }
 
     @Suppress("unused")

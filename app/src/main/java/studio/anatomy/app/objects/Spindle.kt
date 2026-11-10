@@ -211,8 +211,15 @@ fun spindle(): ObjectSpec {
             mesh = MeshBuilder().apply {
                 addMesh(Geo.cylinder(0.055f, 0.10f, 14), Mat4.translation(V3(0f, 0f, 0f)))
                 addMesh(Geo.torus(0.070f, 0.012f, 18, 4).transformed(Mat4.rotateX(90f)), Mat4.translation(V3(0f, 0.06f, 0f)))
+                for (i in 0 until 4) {
+                    addMesh(
+                        Geo.box(0.128f, 0.010f, 0.012f),
+                        Mat4.rotateZ(45f * i),
+                    )
+                }
             }.build(),
             material = Materials.ruby, origin = V3(0.34f, 1.24f, 0.18f),
+            animate = { ctx -> Mat4.rotateZ(ctx.machineTime * (22f + 58f * ctx.control)) },
         ),
     )
 
@@ -371,13 +378,42 @@ fun spindle(): ObjectSpec {
             )
         },
         effects = { ctx ->
+            val coolant = 0.35f + 0.65f * ctx.control
+            val shimmer = 0.75f + 0.25f * kotlin.math.sin(ctx.machineTime * 3.4f)
             listOf(
                 SceneEffect.Ring(V3(0f, 0.31f, 0f), 0.66f, 0xFF6EF2DF.toInt(), 0f, 0.20f),
                 SceneEffect.Glow(
                     V3(0f, 0.42f, 0f),
                     0.24f,
                     0xFF6EF2DF.toInt(),
-                    0.18f + 0.35f * ctx.control,
+                    (0.18f + 0.35f * ctx.control) * shimmer,
+                ),
+                SceneEffect.Glow(V3(0f, 0.19f, 0f), 0.20f, 0xFFB8F6EC.toInt(), 0.10f + 0.24f * coolant),
+                SceneEffect.Flow(
+                    points = listOf(
+                        V3(-0.06f, 0.56f, 0.04f),
+                        V3(-0.05f, 0.47f, 0.03f),
+                        V3(-0.02f, 0.29f, 0.01f),
+                        V3(0f, 0.14f, 0f),
+                    ),
+                    color = 0xFF9FF7FF.toInt(),
+                    count = 6,
+                    speed = 0.5f + 0.65f * coolant,
+                    phase = 0.15f,
+                    dotRadius = 0.014f,
+                ),
+                SceneEffect.Flow(
+                    points = listOf(
+                        V3(0.06f, 0.56f, 0.04f),
+                        V3(0.05f, 0.47f, 0.03f),
+                        V3(0.02f, 0.29f, 0.01f),
+                        V3(0f, 0.14f, 0f),
+                    ),
+                    color = 0xFFB8F6EC.toInt(),
+                    count = 6,
+                    speed = 0.55f + 0.65f * coolant,
+                    phase = 0.58f,
+                    dotRadius = 0.014f,
                 ),
             )
         },

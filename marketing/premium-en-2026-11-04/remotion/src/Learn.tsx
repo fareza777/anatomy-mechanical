@@ -1,0 +1,2 @@
+import React from'react';import{useVideoConfig}from'remotion';import{Base,Copy,Phone}from'./design';
+export const Learn=()=>{const{width,height}=useVideoConfig();const v=height>width;return <Base><Copy tag="04 / LEARN" title={['Every component','has a story.']} body="Tap an explain point. Discover what the part does and where it belongs."/><Phone src="phone-hotspot" x={v?250:1210} y={v?670:105} w={v?550:398} rotate={2}/></Base>}

@@ -113,6 +113,41 @@ fun hydraulicArm(): ObjectSpec {
             material = Materials.emitAmber, parent = "hy_cab", origin = V3(-0.22f, 0.36f, 0.16f),
         ),
     )
+    parts.add(
+        Part(
+            id = "hy_beacon_rotor", name = "Beacon reflector", system = HY_CAB, assembly = HY_HOUSE,
+            mesh = MeshBuilder().apply {
+                addMesh(Geo.cylinder(0.020f, 0.075f, 10), Mat4.translation(V3(0f, 0.040f, 0f)))
+                for (i in 0 until 3) {
+                    addMesh(
+                        Geo.box(0.075f, 0.060f, 0.012f),
+                        Mat4.translation(V3(0.045f, 0.045f, 0f)).multiply(Mat4.rotateY(i * 120f)),
+                    )
+                }
+            }.build(),
+            material = Materials.emitAmber,
+            parent = "hy_cab", origin = V3(-0.22f, 0.395f, 0.16f),
+            animate = { ctx -> Mat4.rotateY(ctx.machineTime * (170f + 230f * ctx.control)) },
+        ),
+    )
+    parts.add(
+        Part(
+            id = "hy_fan", name = "Engine cooling fan", system = HY_CAB, assembly = HY_BASE,
+            mesh = MeshBuilder().apply {
+                addMesh(Geo.cylinder(0.035f, 0.035f, 12).transformed(Mat4.rotateX(90f)))
+                for (i in 0 until 5) {
+                    addMesh(
+                        Geo.box(0.018f, 0.17f, 0.075f),
+                        Mat4.rotateZ(72f * i).multiply(Mat4.translation(V3(0f, 0.090f, 0.02f))),
+                    )
+                }
+                addMesh(Geo.torus(0.205f, 0.012f, 24, 4), Mat4.translation(V3(0f, 0f, 0.045f)))
+            }.build(),
+            material = Materials.nickel,
+            origin = V3(-0.61f, 0.90f, 0.39f),
+            animate = { ctx -> Mat4.rotateZ(ctx.machineTime * (80f + 390f * ctx.control)) },
+        ),
+    )
 
     parts.add(
         Part(
@@ -434,9 +469,11 @@ fun hydraulicArm(): ObjectSpec {
             )
         },
         effects = { ctx ->
+            val beacon = 0.72f + 0.28f * kotlin.math.sin(ctx.machineTime * 2.6f)
             listOf(
                 SceneEffect.Ring(V3(0f, 0.31f, 0f), 1.18f, 0xFFE08A4A.toInt(), 0f, 0.18f),
-                SceneEffect.Glow(V3(-0.10f, 1.26f, -0.44f), 0.20f, 0xFFFFB562.toInt(), 0.30f),
+                SceneEffect.Glow(V3(-0.10f, 1.26f, -0.44f), 0.20f, 0xFFFFB562.toInt(), 0.22f + 0.26f * beacon),
+                SceneEffect.Glow(V3(-0.61f, 0.90f, 0.40f), 0.16f, 0xFFB8F6EC.toInt(), 0.10f + 0.10f * ctx.control),
                 SceneEffect.Flow(
                     points = listOf(
                         V3(0.30f, 1.10f, 0.24f),

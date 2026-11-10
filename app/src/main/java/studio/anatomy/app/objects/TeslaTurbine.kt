@@ -188,8 +188,12 @@ fun teslaTurbine(): ObjectSpec {
                     )
                 }
                 addMesh(Geo.cylinder(0.040f, 0.10f, 12), Mat4.translation(V3(0f, -0.03f, 0f)))
+                for (i in 0 until 4) {
+                    addMesh(Geo.box(0.28f, 0.010f, 0.010f), Mat4.rotateY(45f * i))
+                }
             }.build(),
             material = Materials.paintOrange, origin = V3(0f, 1.94f, 0f),
+            animate = { ctx -> Mat4.rotateY(ctx.machineTime * (22f + 65f * ctx.control)) },
         ),
     )
 
@@ -251,6 +255,27 @@ fun teslaTurbine(): ObjectSpec {
                 addMesh(Geo.box(0.10f, 0.02f, 0.10f), Mat4.translation(V3(0f, 0.09f, 0f)))
             }.build(),
             material = Materials.graphite, origin = V3(-1.26f, 1.62f, 0f),
+        ),
+    )
+
+    // The cooling fan is on the generator's free end, where the moving air is visible
+    // from the cutaway side of the bedplate.
+    parts.add(
+        Part(
+            id = "tt_cooling_fan", name = "Generator cooling fan", system = TT_GEN, assembly = TT_GEN,
+            mesh = MeshBuilder().apply {
+                addMesh(Geo.cylinder(0.038f, 0.035f, 14).transformed(Mat4.rotateZ(90f)))
+                for (i in 0 until 5) {
+                    addMesh(
+                        Geo.box(0.016f, 0.16f, 0.075f),
+                        Mat4.rotateX(72f * i).multiply(Mat4.translation(V3(0f, 0f, 0.080f))),
+                    )
+                }
+                addMesh(Geo.torus(0.102f, 0.010f, 22, 4).transformed(Mat4.rotateZ(90f)), Mat4.translation(V3(0.02f, 0f, 0f)))
+            }.build(),
+            material = Materials.nickel,
+            origin = V3(-0.98f, TT_AXIS_Y, 0f),
+            animate = { ctx -> Mat4.rotateX(ctx.machineTime * (55f + 470f * ctx.control)) },
         ),
     )
 
@@ -378,9 +403,11 @@ fun teslaTurbine(): ObjectSpec {
             )
         },
         effects = { ctx ->
+            val pulse = 0.78f + 0.22f * sin(ctx.machineTime * 2.8f)
             listOf(
                 SceneEffect.Ring(V3(0f, TT_AXIS_Y, 0f), 0.74f, 0xFFFFC46B.toInt(), ctx.machineTime * 0.3f, 0.22f),
-                SceneEffect.Glow(V3(-1.26f, TT_AXIS_Y, 0f), 0.30f, 0xFFFFC46B.toInt(), 0.16f + 0.3f * ctx.control),
+                SceneEffect.Glow(V3(-1.26f, TT_AXIS_Y, 0f), 0.30f, 0xFFFFC46B.toInt(), (0.16f + 0.3f * ctx.control) * pulse),
+                SceneEffect.Glow(V3(-0.98f, TT_AXIS_Y, 0f), 0.18f, 0xFFB8F6EC.toInt(), 0.12f + 0.16f * ctx.control),
                 SceneEffect.Flow(
                     points = listOf(
                         V3(0f, 2.10f, 0f),
@@ -393,6 +420,18 @@ fun teslaTurbine(): ObjectSpec {
                     speed = 0.3f + 0.4f * ctx.control,
                     phase = 0.15f,
                     dotRadius = 0.024f,
+                ),
+                SceneEffect.Flow(
+                    points = listOf(
+                        V3(1.55f, TT_AXIS_Y - 0.52f, 0f),
+                        V3(1.55f, TT_AXIS_Y - 0.78f, 0.02f),
+                        V3(1.42f, 0.36f, 0.12f),
+                    ),
+                    color = 0xFFE8FFF7.toInt(),
+                    count = 7,
+                    speed = 0.20f + 0.32f * ctx.control,
+                    phase = 0.68f,
+                    dotRadius = 0.018f,
                 ),
             )
         },

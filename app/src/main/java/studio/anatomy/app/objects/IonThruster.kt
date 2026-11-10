@@ -132,6 +132,89 @@ fun ionThruster(): ObjectSpec {
         )
     }
 
+    // Three travelling rings make the exhaust beam legible even when the plume is
+    // nearly transparent at low power. They are diagnostic markers, not hardware.
+    (0 until 3).forEach { index ->
+        parts.add(
+            Part(
+                id = "io_beam_${index + 1}", name = "Beam pulse ${index + 1}",
+                system = IO_PLASMA, assembly = "BEAM",
+                mesh = Geo.torus(0.105f, 0.007f, 26, 4),
+                material = Materials.emitBlue,
+                origin = V3(0f, IO_CHAMBER_Y + 0.94f, 0f),
+                doubleSided = true,
+                animate = { ctx ->
+                    val phase = ((ctx.machineTime * 0.72f + index * 0.33f) % 1f)
+                    val radius = 0.72f + 0.65f * phase
+                    Mat4.translation(V3(0f, 0.20f + 0.82f * phase, 0f))
+                        .multiply(Mat4.scale(V3(radius, 1f, radius)))
+                },
+                explode = V3(0f, 1.9f, 0f),
+            ),
+        )
+    }
+
+    // An orbiting field-scan ring sits around the grid stack, where it stays
+    // readable from the default camera even when the exhaust plume is clipped.
+    parts.add(
+        Part(
+            id = "io_scan_ring", name = "Steering field scan ring",
+            system = IO_MAGNET, assembly = "GRIDS",
+            mesh = MeshBuilder().apply {
+                addMesh(Geo.torus(0.49f, 0.012f, 40, 5))
+                addMesh(Geo.torus(0.49f, 0.025f, 40, 4), Mat4.translation(V3(0f, 0.032f, 0f)))
+                for (i in 0 until 3) {
+                    val size = if (i == 0) 0.115f else 0.080f
+                    addMesh(
+                        Geo.box(size, 0.055f, size),
+                        Mat4.rotateY(120f * i).multiply(Mat4.translation(V3(0.49f, 0f, 0f))),
+                    )
+                }
+                addMesh(Geo.box(0.22f, 0.018f, 0.045f), Mat4.translation(V3(0.36f, 0.02f, 0f)))
+            }.build(),
+            material = Materials.emitBlue,
+            origin = V3(0f, IO_CHAMBER_Y + 0.43f, 0f),
+            doubleSided = true,
+            animate = { ctx -> Mat4.rotateY(ctx.machineTime * (45f + 95f * ctx.control)) },
+            explode = V3(0f, 1.45f, 0f),
+        ),
+    )
+
+    parts.add(
+        Part(
+            id = "io_psu_fan", name = "Power-stage cooling fan",
+            system = IO_POWER, assembly = "POWER",
+            mesh = MeshBuilder().apply {
+                addMesh(Geo.cylinder(0.030f, 0.026f, 12).transformed(Mat4.rotateX(90f)))
+                for (i in 0 until 5) {
+                    addMesh(
+                        Geo.box(0.014f, 0.12f, 0.045f),
+                        Mat4.rotateZ(72f * i).multiply(Mat4.translation(V3(0f, 0.070f, 0f))),
+                    )
+                }
+            }.build(),
+            material = Materials.nickel,
+            origin = V3(-0.82f, 0.58f, -0.47f),
+            animate = { ctx -> Mat4.rotateZ(ctx.machineTime * (110f + 260f * ctx.control)) },
+        ),
+    )
+    parts.add(
+        Part(
+            id = "io_feed_valve", name = "Xenon feed handwheel",
+            system = IO_FEED, assembly = "FEED",
+            mesh = MeshBuilder().apply {
+                addMesh(Geo.torus(0.065f, 0.009f, 18, 4))
+                for (i in 0 until 4) {
+                    addMesh(Geo.box(0.115f, 0.010f, 0.010f), Mat4.rotateY(45f * i))
+                }
+                addMesh(Geo.cylinder(0.014f, 0.040f, 10))
+            }.build(),
+            material = Materials.brass,
+            origin = V3(0.92f, 1.035f, -0.10f),
+            animate = { ctx -> Mat4.rotateY(ctx.machineTime * (18f + 46f * ctx.control)) },
+        ),
+    )
+
     parts.add(
         Part(
             id = "io_nozzle", name = "Plasma nozzle", system = IO_PLASMA, assembly = "THRUSTER",
@@ -382,7 +465,8 @@ fun ionThruster(): ObjectSpec {
             )
         },
         effects = { ctx ->
-            val intensity = 0.35f + 0.65f * ctx.control
+            val breathe = 0.72f + 0.28f * sin(ctx.machineTime * 2.1f)
+            val intensity = (0.35f + 0.65f * ctx.control) * breathe
             listOf(
                 SceneEffect.Plume(
                     origin = V3(0f, IO_CHAMBER_Y + 0.84f, 0f),
@@ -393,9 +477,12 @@ fun ionThruster(): ObjectSpec {
                     palette = PlumePalette.PLASMA,
                 ),
                 SceneEffect.Glow(
-                    V3(0f, IO_CHAMBER_Y + 0.68f, 0f), 0.42f, 0xFF8FB4FF.toInt(), 0.30f + 0.4f * intensity,
+                    V3(0f, IO_CHAMBER_Y + 0.68f, 0f), 0.42f, 0xFF8FB4FF.toInt(), 0.22f + 0.46f * intensity,
                 ),
                 SceneEffect.Ring(V3(0f, 0.31f, 0f), 0.74f, 0xFF8FB4FF.toInt(), 0f, 0.22f),
+                SceneEffect.Glow(
+                    V3(-0.82f, 0.58f, -0.40f), 0.18f, 0xFF8FB4FF.toInt(), 0.12f + 0.14f * breathe,
+                ),
             )
         },
     )

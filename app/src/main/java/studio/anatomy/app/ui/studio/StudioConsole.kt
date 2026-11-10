@@ -420,10 +420,48 @@ private fun SimulatePanel(state: StudioState) {
             Spacer(Modifier.width(6.dp))
             SecondaryButton("Reset", onClick = {
                 state.control = control.defaultValue
+                state.playbackSpeed = 1f
                 state.resetClockRequest++
             })
             Spacer(Modifier.weight(1f))
             MonoLabel(control.highLabel, color = colors.textTertiary, fontSize = 7)
+        }
+        Spacer(Modifier.height(5.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            LabelWithDot("MOTION SPEED", color = colors.textSecondary)
+            Spacer(Modifier.weight(1f))
+            Text(
+                when {
+                    state.playbackSpeed < 0.97f -> String.format("%.2f×  SLOW MOTION", state.playbackSpeed)
+                    state.playbackSpeed > 1.03f -> String.format("%.2f×  FAST", state.playbackSpeed)
+                    else -> "1.00×  NATURAL"
+                },
+                color = colors.accent,
+                fontFamily = JetBrainsMono,
+                fontSize = 10.sp,
+                letterSpacing = 0.3.sp,
+                maxLines = 1,
+            )
+        }
+        Slider(
+            value = state.playbackSpeed,
+            onValueChange = { state.playbackSpeed = it },
+            valueRange = 0.25f..2f,
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = colors.accent,
+                activeTrackColor = colors.accent,
+                inactiveTrackColor = colors.line,
+                activeTickColor = Color.Transparent,
+                inactiveTickColor = Color.Transparent,
+            ),
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            MonoLabel("0.25× SLOW", color = colors.textTertiary, fontSize = 7)
+            Spacer(Modifier.weight(1f))
+            MonoLabel("1× NATURAL", color = colors.textTertiary, fontSize = 7)
+            Spacer(Modifier.weight(1f))
+            MonoLabel("2× FAST", color = colors.textTertiary, fontSize = 7)
         }
     }
 }

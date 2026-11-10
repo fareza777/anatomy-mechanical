@@ -1,0 +1,128 @@
+﻿{
+    "images":  [
+                   {
+                       "file":  "01-explore.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  412257,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "02-cutaway.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  615043,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "03-explode.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  403852,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "04-simulate.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  403793,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "05-learn.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  244423,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "06-robotics.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  340592,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "07-export.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  210931,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "08-offline.png",
+                       "dimensions":  [
+                                          1080,
+                                          1920
+                                      ],
+                       "bytes":  449297,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "app-icon-512.png",
+                       "dimensions":  [
+                                          512,
+                                          512
+                                      ],
+                       "bytes":  233940,
+                       "passed":  true
+                   },
+                   {
+                       "file":  "feature-graphic-1024x500.png",
+                       "dimensions":  [
+                                          1024,
+                                          500
+                                      ],
+                       "bytes":  655127,
+                       "passed":  true
+                   }
+               ],
+    "audio":  {
+                  "seconds":  36.0,
+                  "channels":  2,
+                  "peak_dbfs":  -2.96,
+                  "rms_dbfs":  -19.66
+              },
+    "typescript":  "tsc --noEmit passed",
+    "visual_review":  "Eight landscape and eight portrait key frames inspected; final screenshot layouts and banner inspected.",
+    "scope":  "Feature/source review and asset validation; no release-build runtime QA.",
+    "videos":  [
+                   {
+                       "width":  1920,
+                       "height":  1080,
+                       "seconds":  36,
+                       "audio":  "aac",
+                       "fps":  30,
+                       "video":  "h264",
+                       "frames":  1080,
+                       "full_decode":  "passed",
+                       "file":  "anatomy-studio-launch-1080p.mp4"
+                   },
+                   {
+                       "width":  1080,
+                       "height":  1920,
+                       "seconds":  36,
+                       "audio":  "aac",
+                       "fps":  30,
+                       "video":  "h264",
+                       "frames":  1080,
+                       "full_decode":  "passed",
+                       "file":  "anatomy-studio-vertical-1080p.mp4"
+                   }
+               ],
+    "decode_method":  "Bundled ffmpeg -v error -xerror -i FILE -c:v rawvideo -c:a pcm_s16le -f null NUL; explicit encoders required because this build omits wrapped_avframe."
+}

@@ -48,6 +48,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -62,6 +63,8 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -79,9 +82,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -144,6 +149,7 @@ class StudioState(
     var mode by mutableStateOf(StudioMode.EXPLORE)
     var activeStep by mutableIntStateOf(-1)
     var control by mutableFloatStateOf(spec.control.defaultValue)
+    var playbackSpeed by mutableFloatStateOf(1f)
     var playing by mutableStateOf(startPlaying)
     var showPins by mutableStateOf(showPinsDefault)
     var showGrid by mutableStateOf(showGridDefault)
@@ -178,6 +184,7 @@ class StudioState(
             StudioMode.LEARN -> {
                 selectedHotspot = null
                 xray = false
+                playing = true
             }
         }
     }
@@ -190,6 +197,10 @@ class StudioState(
         if (spec.steps.isEmpty()) return
         mode = StudioMode.LEARN
         activeStep = 0
+        selectedHotspot = null
+        explodedAssembly = null
+        xray = false
+        playing = true
         applyStep(0)
     }
 
@@ -256,8 +267,45 @@ class StudioState(
     fun openHotspot(hotspot: Hotspot) {
         selectedHotspot = hotspot
         spec.parts.firstOrNull { it.id == hotspot.partId }?.let { selectedSystem = it.system }
+        // A focused part is often behind an outer shell. Ghosting the rest of
+        // the model keeps the selected hardware visible instead of centering a
+        // camera on an opaque cover.
+        xray = true
         if (hotspot.explode > 0.01f) explodeTarget = hotspot.explode
-        flyTo(hotspot.camera)
+        // The stage now frames the selected part itself. Start at 1:1 so the
+        // user can step through parts without inheriting a second zoom level.
+        flyTo(hotspot.camera.copy(zoom = 1f))
+    }
+
+    fun stepHotspot(delta: Int) {
+        val current = selectedHotspot ?: return
+        val index = spec.hotspots.indexOf(current)
+        val next = index + delta
+        if (index < 0 || next !in spec.hotspots.indices) return
+        openHotspot(spec.hotspots[next])
+    }
+
+    fun setPartZoom(value: Float) {
+        stopCamera()
+        pose = pose.copy(zoom = value.coerceIn(0.6f, 2.4f))
+    }
+
+    fun resetPartZoom() {
+        selectedHotspot?.let { flyTo(it.camera.copy(zoom = 1f)) }
+    }
+
+    fun dismissHotspot() {
+        selectedHotspot = null
+        selectedSystem = null
+        xray = false
+        flyTo(spec.defaultPose)
+    }
+
+    fun resetView() {
+        selectedHotspot = null
+        selectedSystem = null
+        xray = false
+        flyTo(spec.defaultPose)
     }
 
     fun isolateHotspot(hotspot: Hotspot) {
@@ -346,6 +394,7 @@ fun StudioScreen(
     val scene = remember(spec.id) { AnatomyCatalog.scene(spec) }
     var frame by remember { mutableLongStateOf(0L) }
     var consoleHeightPx by remember { mutableIntStateOf(0) }
+    var fullscreenPanelHeightPx by remember { mutableIntStateOf(0) }
     var showExport by remember { mutableStateOf(false) }
     var fullscreen by remember { mutableStateOf(false) }
 
@@ -357,7 +406,7 @@ fun StudioScreen(
             withFrameNanos { now ->
                 if (now - last > stepNanos) {
                     last = now
-                    clock.update(now, playing = state.playing)
+                    clock.update(now, playing = state.playing, rate = state.playbackSpeed)
                     frame++
                 }
             }
@@ -367,6 +416,11 @@ fun StudioScreen(
     LaunchedEffect(state.resetClockRequest) {
         clock.resetClock()
         clock.targetControl = state.control
+    }
+    // Guided study is a colour walk-through: it keeps animating normally and
+    // never inherits a cutaway ghost left over from a previous exploration.
+    LaunchedEffect(state.mode) {
+        if (state.mode == StudioMode.LEARN) state.xray = false
     }
 
     val anim = AnimContext(clock.ambient, clock.machine, clock.control)
@@ -393,8 +447,8 @@ fun StudioScreen(
 
     BackHandler {
         when {
+            state.selectedHotspot != null -> state.dismissHotspot()
             fullscreen -> fullscreen = false
-            state.selectedHotspot != null -> state.selectedHotspot = null
             showExport -> showExport = false
             else -> onBack()
         }
@@ -450,13 +504,24 @@ fun StudioScreen(
                     Spacer(Modifier.height(9.dp))
                     Hairline(Modifier.padding(horizontal = 18.dp))
                     Spacer(Modifier.height(8.dp))
-                    StudioConsole(
-                        state = state,
-                        anim = anim,
-                        onHeight = {},
-                        modifier = Modifier.fillMaxWidth(),
-                        compact = true,
-                    )
+                    val focused = state.selectedHotspot
+                    if (focused != null) {
+                        PartFocusPanel(
+                            spec = spec,
+                            state = state,
+                            hotspot = focused,
+                            number = spec.hotspots.indexOf(focused) + 1,
+                            compact = true,
+                        )
+                    } else {
+                        StudioConsole(
+                            state = state,
+                            anim = anim,
+                            onHeight = {},
+                            modifier = Modifier.fillMaxWidth(),
+                            compact = true,
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
                 }
                 }
@@ -508,12 +573,6 @@ fun StudioScreen(
                         qualitySetting = qualitySetting,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    StageBadge(
-                        playing = state.playing,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(12.dp),
-                    )
                     StudioToolRail(
                         state = state,
                         fullscreen = fullscreen,
@@ -526,16 +585,52 @@ fun StudioScreen(
                 }
                 if (!fullscreen) {
                     Spacer(Modifier.height(8.dp))
-                    StudioConsole(
-                        state = state,
-                        anim = anim,
-                        onHeight = { consoleHeightPx = it },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    val focused = state.selectedHotspot
+                    if (focused != null) {
+                        PartFocusPanel(
+                            spec = spec,
+                            state = state,
+                            hotspot = focused,
+                            number = spec.hotspots.indexOf(focused) + 1,
+                            onHeight = { consoleHeightPx = it },
+                        )
+                    } else {
+                        StudioConsole(
+                            state = state,
+                            anim = anim,
+                            onHeight = { consoleHeightPx = it },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
 
+        val fullscreenHotspot = if (fullscreen) state.selectedHotspot else null
+        LaunchedEffect(fullscreen, fullscreenHotspot?.id) {
+            if (fullscreenHotspot == null) fullscreenPanelHeightPx = 0
+        }
+        AnimatedVisibility(
+            visible = fullscreenHotspot != null,
+            enter = fadeIn(tween(160)) + slideInVertically(tween(220)) { it },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(220)) { it },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(if (landscape) 0.62f else 1f)
+                .padding(horizontal = if (landscape) 12.dp else 0.dp),
+        ) {
+            fullscreenHotspot?.let { hotspot ->
+                PartFocusPanel(
+                    spec = spec,
+                    state = state,
+                    hotspot = hotspot,
+                    number = spec.hotspots.indexOf(hotspot) + 1,
+                    compact = true,
+                    overlay = true,
+                    onHeight = { fullscreenPanelHeightPx = it },
+                )
+            }
+        }
         AnimatedVisibility(
             visible = toast != null,
             enter = fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 },
@@ -543,7 +638,11 @@ fun StudioScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = with(LocalDensity.current) { consoleHeightPx.toDp() + 12.dp }),
+                .padding(
+                    bottom = with(LocalDensity.current) {
+                        (if (fullscreen) fullscreenPanelHeightPx else consoleHeightPx).toDp() + 12.dp
+                    },
+                ),
         ) {
             GlassPanel(shape = RoundedCornerShape(50)) {
                 Row(
@@ -562,16 +661,6 @@ fun StudioScreen(
                 }
             }
         }
-    }
-
-    state.selectedHotspot?.let { hotspot ->
-        HotspotSheet(
-            spec = spec,
-            hotspot = hotspot,
-            number = spec.hotspots.indexOf(hotspot) + 1,
-            onDismiss = { state.selectedHotspot = null },
-            onIsolate = { state.isolateHotspot(hotspot) },
-        )
     }
 
     if (showExport) {
@@ -630,21 +719,29 @@ private fun StudioStage(
     val safeBottom = with(density) { (if (isLandscape) 18.dp else 14.dp).toPx() }
 
     val still = !dragging
+    val studyColor = state.mode == StudioMode.LEARN
+    val sceneFaceCount = remember(scene) { scene.parts.sumOf { it.mesh.faces.size } }
     val request = RenderRequest(
         width = stageWidth,
         height = stageHeight,
         pose = state.pose,
         anim = anim,
         explode = explodeMap,
-        selectedSystem = state.selectedSystem,
-        xray = state.xray,
+        selectedSystem = if (studyColor) null else state.selectedSystem,
+        focusPartId = state.selectedHotspot?.partId,
+        xray = if (studyColor) false else state.xray,
         showGrid = state.showGrid,
-        quality = if (still) RenderQuality.FULL else RenderQuality.INTERACTIVE,
+        // Full detail is reserved for a paused, stationary inspection frame.
+        // Animated scenes use the cheaper paint path and a smaller live buffer.
+        quality = if (still && !state.playing) RenderQuality.FULL else RenderQuality.INTERACTIVE,
         safeTop = safeTop,
         safeBottom = safeBottom,
         safeSide = safeLeft,
         safeRight = safeRight,
         density = density.density,
+        // Surface hatching is a still-frame detail. Running animations keep
+        // their geometry and lighting, but skip the clipped pattern pass.
+        detail = still && !state.playing,
     )
     // The studio rasterises into its own bitmap. Drawing thousands of small paths straight
     // into a hardware canvas crashes older Adreno drivers inside HWUI's mesh path, and the
@@ -665,9 +762,13 @@ private fun StudioStage(
     }
     // Light models can afford a much sharper moving buffer than a 80-part turbofan, so the
     // resolution follows the scene's weight instead of punishing every object equally.
-    val heavyScene = scene.parts.size >= 40
+    val heavyScene = scene.parts.size >= 40 || sceneFaceCount >= 3600
     val liveScale = when {
-        still -> if (state.playing) (if (heavyScene) 0.90f else 0.95f) else 1f
+        still && !state.playing -> 1f
+        // Motion always gets the adaptive buffer. The quality selector still
+        // governs the paused, full-detail frame and manual dragging; this cap
+        // prevents a heavy mechanism from lagging just because SHARP is set.
+        still && state.playing -> if (heavyScene) 0.55f else 0.64f
         qualitySetting == AnatomyPrefs.QUALITY_LITE ->
             if (dragging) 0.5f else if (heavyScene) 0.55f else 0.62f
         qualitySetting == AnatomyPrefs.QUALITY_SHARP ->
@@ -751,6 +852,7 @@ private fun StudioStage(
                 Log.d(
                     "AnatomyPerf",
                     "faces=${report.faceCount} batches=${report.batches} " +
+                        "patterns=${report.patterns} " +
                         "chrome=${report.chromeMillis} build=${report.buildMillis} sort=${report.sortMillis} " +
                         "paint=${report.paintMillis} cpu=${report.renderMillis}ms " +
                         "${bufferWidth}x${bufferHeight}@${liveScale}",
@@ -840,29 +942,6 @@ private fun StudioStage(
                 MonoHint("DRAG / ORBIT   PINCH / SCALE")
             }
         }
-    }
-}
-
-@Composable
-private fun StageBadge(playing: Boolean, modifier: Modifier = Modifier) {
-    val colors = LocalAnatomyColors.current
-    Row(
-        modifier
-            .clip(RoundedCornerShape(50))
-            .background(colors.stageInk.copy(alpha = 0.72f))
-            .border(1.dp, colors.stageLine, RoundedCornerShape(50))
-            .padding(horizontal = 9.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(4.dp).background(colors.stageAccent, CircleShape))
-        Spacer(Modifier.width(6.dp))
-        Text(
-            if (playing) "LIVE 3D / DRAG TO ORBIT" else "FROZEN / TAP RUN",
-            color = colors.stageTextSecondary,
-            fontFamily = JetBrainsMono,
-            fontSize = 12.sp,
-            letterSpacing = 0.8.sp,
-        )
     }
 }
 
@@ -1034,7 +1113,7 @@ private fun StudioToolRail(
         GlassIconButton(
             icon = Icons.Outlined.CenterFocusStrong,
             contentDescription = "Reset view",
-            onClick = { state.flyTo(state.spec.defaultPose) },
+            onClick = { state.resetView() },
             size = 34.dp,
             iconSize = 15.dp,
         )
@@ -1079,8 +1158,13 @@ private fun HotspotSheet(
     spec: ObjectSpec,
     hotspot: Hotspot,
     number: Int,
+    zoom: Float,
     onDismiss: () -> Unit,
     onIsolate: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onZoom: (Float) -> Unit,
+    onResetZoom: () -> Unit,
 ) {
     val colors = LocalAnatomyColors.current
     SheetSystemBars(colors.isDark)
@@ -1112,10 +1196,28 @@ private fun HotspotSheet(
                 )
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    MonoLabel("HOTSPOT / ${spec.hotspots.size.toString().padStart(2, '0')}", color = colors.accent, fontSize = 8)
+                    MonoLabel("PART FOCUS", color = colors.accent, fontSize = 8)
+                    MonoLabel(
+                        "${number.toString().padStart(2, '0')} OF ${spec.hotspots.size.toString().padStart(2, '0')}",
+                        color = colors.textTertiary,
+                        fontSize = 8,
+                    )
                     MonoLabel(part?.system ?: spec.category, color = colors.textTertiary, fontSize = 8)
                 }
                 Spacer(Modifier.weight(1f))
+                PartStepButton(
+                    icon = Icons.Outlined.ArrowBack,
+                    contentDescription = "Previous part",
+                    enabled = number > 1,
+                    onClick = onPrevious,
+                )
+                Spacer(Modifier.width(6.dp))
+                PartStepButton(
+                    icon = Icons.Outlined.ArrowForward,
+                    contentDescription = "Next part",
+                    enabled = number < spec.hotspots.size,
+                    onClick = onNext,
+                )
             }
             Spacer(Modifier.height(10.dp))
             Text(
@@ -1140,11 +1242,215 @@ private fun HotspotSheet(
             HotspotRow("ASSEMBLY", part?.assembly ?: "—")
             HotspotRow("PART ID", hotspot.partId.uppercase())
             if (hotspot.readoutLabel != null) HotspotRow("FUNCTION", hotspot.readoutLabel)
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
+            Hairline()
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                MonoLabel("PART ZOOM", color = colors.textSecondary, fontSize = 8, letterSpacing = 0.8f)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${(zoom * 100).roundToInt()}%",
+                    color = colors.accent,
+                    fontFamily = JetBrainsMono,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.4.sp,
+                )
+                Spacer(Modifier.width(9.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, colors.line, RoundedCornerShape(50))
+                        .clickable(onClick = onResetZoom)
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                ) {
+                    Text("1:1", color = colors.textSecondary, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                }
+            }
+            Slider(
+                value = zoom.coerceIn(0.6f, 2.4f),
+                onValueChange = onZoom,
+                valueRange = 0.6f..2.4f,
+                modifier = Modifier.fillMaxWidth().height(28.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = colors.accent,
+                    activeTrackColor = colors.accent,
+                    inactiveTrackColor = colors.line,
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent,
+                ),
+            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                MonoLabel("WIDE", color = colors.textTertiary, fontSize = 7)
+                Spacer(Modifier.weight(1f))
+                MonoLabel("DETAIL", color = colors.textTertiary, fontSize = 7)
+            }
+            Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PrimaryInline("ISOLATE SYSTEM", onIsolate, Modifier.weight(1f))
                 Spacer(Modifier.width(10.dp))
                 SecondaryInline("CLOSE", onDismiss, Modifier.weight(0.7f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PartStepButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalAnatomyColors.current
+    Box(
+        Modifier
+            .size(36.dp)
+            .alpha(if (enabled) 1f else 0.32f)
+            .clip(CircleShape)
+            .border(1.dp, colors.line, CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = colors.textSecondary,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun PartFocusPanel(
+    spec: ObjectSpec,
+    state: StudioState,
+    hotspot: Hotspot,
+    number: Int,
+    compact: Boolean = false,
+    overlay: Boolean = false,
+    onHeight: (Int) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalAnatomyColors.current
+    val part = spec.parts.firstOrNull { it.id == hotspot.partId }
+    val total = spec.hotspots.size
+    GlassPanel(
+        modifier = modifier
+            .fillMaxWidth()
+            .onSizeChanged { onHeight(it.height) }
+            .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)),
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+        borderColor = colors.line.copy(alpha = 0.9f),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 18.dp)
+                .padding(top = if (compact) 9.dp else 10.dp, bottom = if (overlay) 8.dp else 12.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    number.toString().padStart(2, '0'),
+                    color = colors.accent.copy(alpha = 0.34f),
+                    fontFamily = SpaceGrotesk,
+                    fontWeight = FontWeight.Light,
+                    fontSize = 40.sp,
+                    lineHeight = 40.sp,
+                )
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    MonoLabel("PART FOCUS", color = colors.accent, fontSize = 8, letterSpacing = 0.8f)
+                    MonoLabel(
+                        "${number.toString().padStart(2, '0')} OF ${total.toString().padStart(2, '0')}  ·  ${part?.system ?: spec.category}",
+                        color = colors.textTertiary,
+                        fontSize = 8,
+                        letterSpacing = 0.4f,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                PartStepButton(
+                    icon = Icons.Outlined.ArrowBack,
+                    contentDescription = "Previous part",
+                    enabled = number > 1,
+                    onClick = { state.stepHotspot(-1) },
+                )
+                Spacer(Modifier.width(6.dp))
+                PartStepButton(
+                    icon = Icons.Outlined.ArrowForward,
+                    contentDescription = "Next part",
+                    enabled = number < total,
+                    onClick = { state.stepHotspot(1) },
+                )
+            }
+            Spacer(Modifier.height(7.dp))
+            Text(
+                hotspot.title,
+                color = colors.text,
+                fontFamily = SpaceGrotesk,
+                fontWeight = FontWeight.Medium,
+                fontSize = if (compact) 21.sp else 24.sp,
+                lineHeight = if (compact) 23.sp else 27.sp,
+                letterSpacing = (-0.5).sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                hotspot.body,
+                color = colors.textSecondary,
+                fontSize = if (compact) 11.5.sp else 12.5.sp,
+                lineHeight = if (compact) 15.sp else 17.sp,
+                maxLines = if (compact) 2 else 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                MonoLabel(part?.name ?: hotspot.partId, color = colors.textSecondary, fontSize = 9)
+                Spacer(Modifier.weight(1f))
+                MonoLabel(part?.assembly ?: "—", color = colors.textTertiary, fontSize = 7)
+            }
+            Spacer(Modifier.height(8.dp))
+            Hairline()
+            Spacer(Modifier.height(7.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                MonoLabel("PART ZOOM", color = colors.textTertiary, fontSize = 8, letterSpacing = 0.8f)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${(state.pose.zoom * 100).roundToInt()}%",
+                    color = colors.accent,
+                    fontFamily = JetBrainsMono,
+                    fontSize = 10.sp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, colors.line, RoundedCornerShape(50))
+                        .clickable { state.resetPartZoom() }
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text("1:1", color = colors.textSecondary, fontFamily = JetBrainsMono, fontSize = 8.sp)
+                }
+            }
+            Slider(
+                value = state.pose.zoom.coerceIn(0.6f, 2.4f),
+                onValueChange = { state.setPartZoom(it) },
+                valueRange = 0.6f..2.4f,
+                modifier = Modifier.fillMaxWidth().height(22.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = colors.accent,
+                    activeTrackColor = colors.accent,
+                    inactiveTrackColor = colors.line,
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent,
+                ),
+            )
+            Spacer(Modifier.height(5.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                PrimaryInline("ISOLATE SYSTEM", { state.isolateHotspot(hotspot) }, Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                SecondaryInline("CLOSE", { state.dismissHotspot() }, Modifier.weight(0.58f))
             }
         }
     }

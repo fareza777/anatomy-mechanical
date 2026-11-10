@@ -1,0 +1,72 @@
+[
+  {
+    "file": "01-explore.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 412257
+  },
+  {
+    "file": "02-cutaway.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 615043
+  },
+  {
+    "file": "03-explode.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 403852
+  },
+  {
+    "file": "04-simulate.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 403793
+  },
+  {
+    "file": "05-learn.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 244423
+  },
+  {
+    "file": "06-robotics.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 340592
+  },
+  {
+    "file": "07-export.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 210931
+  },
+  {
+    "file": "08-offline.png",
+    "width": 1080,
+    "height": 1920,
+    "mode": "RGB",
+    "bytes": 449297
+  },
+  {
+    "file": "app-icon-512.png",
+    "width": 512,
+    "height": 512,
+    "mode": "RGB",
+    "bytes": 233940
+  },
+  {
+    "file": "feature-graphic-1024x500.png",
+    "width": 1024,
+    "height": 500,
+    "mode": "RGB",
+    "bytes": 655127
+  }
+]

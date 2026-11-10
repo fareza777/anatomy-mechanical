@@ -41,25 +41,25 @@ import studio.anatomy.app.ui.theme.LocalAnatomyColors
  * and set USE_TEST_ADS to false. Never click your own production ads.
  */
 object AdConfig {
-    const val USE_TEST_ADS = true
+    const val USE_TEST_ADS = false
     const val AD_FREE_HOURS = 12
 
     val BANNER_UNIT = if (USE_TEST_ADS) {
         "ca-app-pub-3940256099942544/9214589741"
     } else {
-        "ca-app-pub-0000000000000000/0000000000"
+        "ca-app-pub-6279186647593327/8290962010"
     }
 
     val INTERSTITIAL_UNIT = if (USE_TEST_ADS) {
         "ca-app-pub-3940256099942544/1033173712"
     } else {
-        "ca-app-pub-0000000000000000/0000000000"
+        "ca-app-pub-6279186647593327/6977880341"
     }
 
     val REWARDED_UNIT = if (USE_TEST_ADS) {
         "ca-app-pub-3940256099942544/5224354917"
     } else {
-        "ca-app-pub-0000000000000000/0000000000"
+        "ca-app-pub-6279186647593327/4891160097"
     }
 }
 

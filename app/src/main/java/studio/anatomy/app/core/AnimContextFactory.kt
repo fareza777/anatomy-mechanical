@@ -19,13 +19,14 @@ class AnimContextFactory {
             lastNanos = nowNanos
             return
         }
+        val speed = rate.coerceIn(0.1f, 2.5f)
         val dt = min((nowNanos - lastNanos) / 1_000_000_000f, 1f / 30f)
         lastNanos = nowNanos
-        ambient += dt
+        ambient += dt * speed
         targetControlSmooth += (targetControl - targetControlSmooth) * (1f - kotlin.math.exp(-dt / 0.22f))
         control = targetControlSmooth
         if (playing) {
-            machine += dt * (0.35f + control * 1.65f) * rate
+            machine += dt * (0.35f + control * 1.65f) * speed
         }
     }
 

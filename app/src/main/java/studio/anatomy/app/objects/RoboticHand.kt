@@ -13,9 +13,11 @@ import studio.anatomy.app.model.Readout
 import studio.anatomy.app.model.SceneEffect
 import studio.anatomy.app.model.SpecRow
 import studio.anatomy.app.render.Geo
+import studio.anatomy.app.render.Material
 import studio.anatomy.app.render.Materials
 import studio.anatomy.app.render.Mesh
 import studio.anatomy.app.render.MeshBuilder
+import studio.anatomy.app.render.SurfacePattern
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -33,6 +35,12 @@ private const val H_WRIST = "WRIST"
 
 private const val PALM_Y = 1.02f
 private const val KNUCKLE_Y = 0.225f
+
+private val palmGrip = Material(
+    "palmGrip", "Palm grip", 0xFFC1AF96.toInt(), specular = 0.12f, shininess = 12f,
+    fillLight = 0.08f, rimLight = 0.14f, patina = 0.025f,
+    pattern = SurfacePattern.SPECKLE, patternStrength = 0.18f,
+)
 
 private val FINGER_X = floatArrayOf(-0.205f, -0.070f, 0.070f, 0.205f)
 private val FINGER_SPLAY = floatArrayOf(7f, 2f, -2f, -7f)
@@ -168,27 +176,75 @@ fun roboticHand(): ObjectSpec {
             id = "hand_palm", name = "Palm chassis", system = HAND_FRAME, assembly = H_FRAME,
             mesh = palm, material = Materials.paintCream,
             origin = V3(0f, PALM_Y, 0f),
+            doubleSided = true,
             explode = V3(0f, 0f, -0.25f),
         )
     )
 
-    // Soft volar pad, thenar mound and heel pad give the palm a hand silhouette.
-    val palmPad = MeshBuilder().apply {
-        addMesh(ellipsoid(0.198f, 0.150f, 0.050f, 24, 12), Mat4.translation(V3(0f, -0.035f, 0.102f)))
-        addMesh(
-            ellipsoid(0.078f, 0.132f, 0.052f, 20, 10),
-            Mat4.translation(V3(-0.236f, -0.075f, 0.096f))
-                .multiply(Mat4.rotateY(-10f))
-                .multiply(Mat4.rotateZ(-14f)),
+    // A shallow padded face closes the palm over the servo cavity. Without it the
+    // dark servo bank showed through and read as a hole in the middle of the hand.
+    parts.add(
+        Part(
+            id = "hand_palm_face", name = "Padded palm face", system = HAND_FRAME, assembly = H_FRAME,
+            mesh = Geo.slab(
+                0.42f, 0.31f, 0.035f,
+                cornerRadius = 0.090f,
+                bevel = 0.012f,
+                segments = 3,
+            ).transformed(Mat4.rotateX(90f)),
+            material = Materials.paintCream,
+            origin = V3(0f, -0.035f, 0.108f),
+            parent = "hand_palm",
+            explode = V3(0f, 0f, 0.16f),
         )
-        addMesh(ellipsoid(0.054f, 0.096f, 0.044f, 18, 9), Mat4.translation(V3(0.246f, -0.048f, 0.086f)))
+    )
+
+    // Low-profile grip pads, thenar mound and heel pad give the palm a hand
+    // silhouette without a large dark vault that reads as a hole.
+    val palmPad = MeshBuilder().apply {
+        addMesh(
+            Geo.slab(0.300f, 0.210f, 0.026f, cornerRadius = 0.070f, bevel = 0.008f, segments = 3)
+                .transformed(Mat4.rotateX(90f)),
+        )
+        addMesh(
+            ellipsoid(0.060f, 0.102f, 0.025f, 16, 8),
+            Mat4.translation(V3(-0.205f, -0.022f, -0.005f)).multiply(Mat4.rotateZ(-12f)),
+        )
+        addMesh(ellipsoid(0.052f, 0.092f, 0.023f, 16, 8), Mat4.translation(V3(0.205f, -0.018f, -0.006f)))
+        // Shallow grip ribs give the pad a deliberate, moulded texture.
+        for (i in -2..2) {
+            addMesh(
+                Geo.box(0.192f, 0.008f, 0.013f),
+                Mat4.translation(V3(0f, -0.040f + i * 0.034f, 0.018f)),
+            )
+        }
     }.build()
     parts.add(
         Part(
             id = "hand_palm_pad", name = "Palm contact pad", system = HAND_SENSE, assembly = H_FRAME,
-            mesh = palmPad, material = Materials.graphite,
+            mesh = palmPad, material = palmGrip,
+            origin = V3(-0.008f, -0.035f, 0.145f),
             parent = "hand_palm",
             explode = V3(0f, 0f, 0.1f),
+        )
+    )
+    parts.add(
+        Part(
+            id = "hand_palm_sensors", name = "Palm pressure matrix", system = HAND_SENSE, assembly = H_FRAME,
+            mesh = MeshBuilder().apply {
+                listOf(
+                    V3(-0.050f, -0.100f, 0.180f), V3(0.050f, -0.100f, 0.180f),
+                    V3(-0.050f, -0.012f, 0.181f), V3(0.050f, -0.012f, 0.181f),
+                ).forEach { point ->
+                    addMesh(
+                        Geo.cylinder(0.009f, 0.006f, 10).transformed(Mat4.rotateX(90f)),
+                        Mat4.translation(point),
+                    )
+                }
+            }.build(),
+            material = Materials.emitCyan,
+            parent = "hand_palm",
+            explode = V3(0f, 0f, 0.12f),
         )
     )
 
