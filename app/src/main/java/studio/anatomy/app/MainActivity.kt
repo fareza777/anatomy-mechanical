@@ -8,7 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
-import studio.anatomy.app.ads.Ads
+import studio.anatomy.app.ads.ConsentManager
 import studio.anatomy.app.billing.RemoveAds
 import studio.anatomy.app.data.AnatomyPrefs
 
@@ -21,10 +21,10 @@ class MainActivity : ComponentActivity() {
         )
         WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
-        Ads.init(applicationContext)
         RemoveAds.init(applicationContext, AnatomyPrefs(applicationContext))
         setContent {
             AnatomyApp()
         }
+        ConsentManager.gatherConsent(this)
     }
 }

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.PlayCircleOutline
+import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -1183,6 +1184,8 @@ fun SystemSheet(
     removeAdsOwned: Boolean = false,
     removeAdsPrice: String = "\$4.99",
     onRemoveAds: () -> Unit = {},
+    privacyOptionsRequired: Boolean = false,
+    onPrivacyOptions: () -> Unit = {},
     onOpenAI: () -> Unit,
 ) {
     val colors = LocalAnatomyColors.current
@@ -1353,6 +1356,19 @@ fun SystemSheet(
                 )
             }
 
+            if (privacyOptionsRequired) {
+                SettingsLabel(
+                    "PRIVACY OPTIONS",
+                    "Review or change how ads are personalized on this device.",
+                )
+                SecondaryButton(
+                    text = "Privacy options",
+                    onClick = onPrivacyOptions,
+                    icon = Icons.Outlined.Policy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
             Spacer(Modifier.height(14.dp))
             Hairline()
             SettingsLabel("LIBRARY", "${favoritesCount.toString().padStart(2, '0')} FAVORITES / ${AnatomyCatalog.specs.size.toString().padStart(2, '0')} OBJECTS")
@@ -1388,7 +1404,7 @@ fun SystemSheet(
             Spacer(Modifier.height(14.dp))
             Hairline()
             Spacer(Modifier.height(16.dp))
-            SystemRow("VERSION", "1.0.0 / ATLAS 01")
+            SystemRow("VERSION", "1.1.0 / ATLAS 01")
             SystemRow("RENDERER", "NATIVE 3D / PROCEDURAL")
             SystemRow("COLLECTION", "${AnatomyCatalog.specs.size.toString().padStart(2, '0')} OBJECTS")
             SystemRow("NETWORK", "AI LAB ONLY / OPTIONAL")

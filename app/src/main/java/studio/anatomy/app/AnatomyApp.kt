@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import studio.anatomy.app.ads.AdBanner
 import studio.anatomy.app.ads.Ads
+import studio.anatomy.app.ads.ConsentManager
 import studio.anatomy.app.ads.InterstitialAds
 import studio.anatomy.app.ads.RewardedAds
 import studio.anatomy.app.billing.RemoveAds
@@ -193,7 +194,7 @@ private fun AnatomyShell(
             }
             }
         }
-        if (!purchased && adFreeUntil <= System.currentTimeMillis()) {
+        if (!purchased && Ads.initialized && ConsentManager.canRequestAds && adFreeUntil <= System.currentTimeMillis()) {
             AdBanner(
                 modifier = Modifier.navigationBarsPadding(),
                 onVisibleChange = { bannerVisible = it },
@@ -241,6 +242,19 @@ private fun AnatomyShell(
                 } else {
                     RemoveAds.purchase(host) { message ->
                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            privacyOptionsRequired = ConsentManager.privacyOptionsRequired,
+            onPrivacyOptions = {
+                val host = context as? Activity
+                if (host == null) {
+                    Toast.makeText(context, "No activity available for privacy options.", Toast.LENGTH_SHORT).show()
+                } else {
+                    ConsentManager.showPrivacyOptionsForm(host) { error ->
+                        if (error != null) {
+                            Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             },

@@ -65,7 +65,10 @@ object AdConfig {
 
 object Ads {
     private const val TAG = "AnatomyAds"
-    private var initialized = false
+
+    /** True after Mobile Ads has been initialized under a canRequestAds consent check. */
+    var initialized by mutableStateOf(false)
+        private set
 
     var adFreeUntil: Long = 0L
     var studioExits: Int = 0
@@ -120,7 +123,8 @@ fun AdBanner(
         onVisibleChange(loaded)
     }
 
-    LaunchedEffect(widthDp) {
+    LaunchedEffect(widthDp, Ads.initialized, ConsentManager.canRequestAds) {
+        if (!Ads.initialized || !ConsentManager.canRequestAds) return@LaunchedEffect
         val size = AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(
             context,
             widthDp.coerceAtLeast(320),
@@ -167,7 +171,7 @@ object InterstitialAds {
     private var lastShownAt = 0L
 
     fun preload(context: Context) {
-        if (ad != null || loading) return
+        if (!Ads.initialized || !ConsentManager.canRequestAds || ad != null || loading) return
         loading = true
         InterstitialAd.load(
             context,
@@ -190,7 +194,7 @@ object InterstitialAds {
 
     /** Shows at most every third studio exit and never within 45 seconds of the last one. */
     fun maybeShow(activity: Activity, context: Context) {
-        if (Ads.isAdFree()) return
+        if (Ads.isAdFree() || !ConsentManager.canRequestAds) return
         Ads.studioExits += 1
         if (Ads.studioExits % 3 != 0) return
         if (System.currentTimeMillis() - lastShownAt < 45_000L) return
@@ -217,7 +221,7 @@ object RewardedAds {
     private var loading = false
 
     fun preload(context: Context) {
-        if (ad != null || loading) return
+        if (!Ads.initialized || !ConsentManager.canRequestAds || ad != null || loading) return
         loading = true
         RewardedAd.load(
             context,
@@ -244,7 +248,7 @@ object RewardedAds {
         onUnavailable: () -> Unit,
     ) {
         val current = ad
-        if (current == null) {
+        if (current == null || !ConsentManager.canRequestAds) {
             preload(activity.applicationContext)
             onUnavailable()
             return
